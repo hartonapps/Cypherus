@@ -9,10 +9,16 @@ AI_ENDPOINT = "https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate"
 FREE_TRANSLATE_ENDPOINT = "https://libretranslate.de/translate"
 
 
-async def ask_free_ai(prompt: str) -> str:
+async def ask_free_ai(prompt: str, persona: str = "default", memory: list[str] | None = None) -> str:
+    memory_text = "\n".join(memory[-6:]) if memory else ""
+    full_prompt = (
+        f"Persona: {persona}. Keep response concise and useful.\n"
+        f"Recent memory:\n{memory_text}\n\n"
+        f"User: {prompt}"
+    )
     try:
         async with httpx.AsyncClient(timeout=35) as client:
-            res = await client.post(AI_ENDPOINT, json={"prompt": prompt})
+            res = await client.post(AI_ENDPOINT, json={"prompt": full_prompt})
             if res.is_success:
                 data = res.json()
                 out = data.get("response") or data.get("result") or data.get("text")

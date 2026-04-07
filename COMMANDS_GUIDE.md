@@ -1,5 +1,17 @@
 # Cypherus Commands (Simple Explanations)
 
+## Smart AI
+- `.gpt <text>` / `.ask <text>` : Ask AI.
+- Auto-smart reply: private questions can be auto-answered when smart AI is enabled.
+- `.persona default|calm|savage` : Change AI personality style.
+
+## Viral / Social
+- `.roast @user` : Fun roast line.
+- `.ship @u1 @u2` : Random compatibility score.
+- `.rate @user` : Random rating.
+- `.vibecheck` : Random vibe result.
+- `.truth` / `.dare` : Party prompts.
+
 ## Core
 - `.menu` / `.help` : Show all commands.
 - `.ping` : Check bot speed (latency).
@@ -11,12 +23,15 @@
 - `.away off` : Disable AFK.
 - `.schedule <10m|HH:MM> <message>` : Send message later.
 - `.filter <word> <response>` : If someone sends that word, bot auto replies.
+- `.workflow create` : (planned) multi-step workflows.
 
-## Privacy / Logging
+## Privacy / Security
 - `.ghostmode on|off` : Toggle stealth mode flag.
 - `.anti-delete on|off` : If enabled, deleted message text is logged to Saved Messages.
 - `.anti-edit on|off` : If enabled, edited messages are logged (old and new text).
 - `.hideonline on|off` : Toggle hide-online flag.
+- `.lockchat on|off` : Private lock mode.
+- `.blockword <word>` : Auto-remove messages containing blocked words.
 
 ## View-Once / Expiring
 - `.vvwatch on|off` : Real-time watch and auto-save expiring/view-once media.
@@ -37,10 +52,17 @@
 - `.song <name>` : Search and download first matching song.
 - `.meta <url>` : Show media metadata.
 
-## AI / Utility
-- `.gpt <text>` / `.ask <text>` : Ask AI endpoint.
-- `.summarize <text>` : Summarize text.
-- `.translate <text> to <lang>` : Translate text.
+## Utility / Dashboard
+- `.stats` : Message + command counters and top chats.
+- `.usage` : Quick usage summary.
+- `.activity @user` : Activity helper output.
+- `.backup` / `.restore` : Backup profile settings.
+- Reply + `.save <name>` : Save message reference.
+- `.get <name>` : Recall saved item.
+- `.list` : List saved keys.
+- `.daily` : Claim daily XP.
+- `.rank` : Show XP and level.
+- `.joke` / `.quote` / `.facts` : Entertainment commands.
 - `.qr <text>` : Generate QR image.
 - `.short <url>` : Shorten URL.
 - `.calc <math>` : Calculator.

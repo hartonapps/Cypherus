@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import random
 import re
 import shutil
 import time
@@ -80,6 +82,14 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.warn @user` `.mute @user 10m`
 • `.join <invite_link>`
 • `.pin` / `.unpin`
+
+**Smart / Viral / Utility+**
+• `.persona calm|savage|default`
+• `.roast @user` `.ship @u1 @u2` `.rate @user` `.vibecheck` `.truth` `.dare`
+• `.lockchat on|off` `.blockword <word>` `.stats` `.activity @user` `.usage`
+• `.joke` `.quote` `.facts` `.backup` `.restore`
+• `.save <name>` (reply) `.get <name>` `.list`
+• `.daily` `.rank`
 """
 
 
@@ -173,12 +183,47 @@ def ensure_settings(data: dict):
     s.setdefault("hideonline", False)
     s.setdefault("vvwatch", True)
     s.setdefault("warns", {})
+    s.setdefault("persona", "default")
+    s.setdefault("smart_ai", True)
+    s.setdefault("chat_memory", {})
+    s.setdefault("lockchat", False)
+    s.setdefault("blockwords", [])
+    s.setdefault("stats", {"messages_seen": 0, "messages_sent": 0, "commands": 0, "chat_hits": {}})
+    s.setdefault("saved_items", {})
+    s.setdefault("xp", {"points": 0, "daily_last": ""})
 
 
 async def run_scheduled_send(client: TelegramClient, chat_id: int, delay: int, text: str):
     await asyncio.sleep(max(delay, 1))
     await client.send_message(chat_id, text)
 
+
+
+
+async def fetch_fun_text(kind: str) -> str:
+    endpoints = {
+        "joke": "https://official-joke-api.appspot.com/random_joke",
+        "quote": "https://api.quotable.io/random",
+        "facts": "https://uselessfacts.jsph.pl/api/v2/facts/random",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=20) as c:
+            r = await c.get(endpoints[kind])
+            if r.is_success:
+                d = r.json()
+                if kind == "joke":
+                    return f"{d.get('setup','')}\n{d.get('punchline','')}"
+                if kind == "quote":
+                    return f"{d.get('content','')} — {d.get('author','')}"
+                return d.get('text') or d.get('fact') or 'No fact'
+    except Exception:
+        pass
+    return f"{kind} endpoint unavailable"
+
+
+def add_xp(data: dict, amount: int = 1):
+    ensure_settings(data)
+    data["settings"]["xp"]["points"] = int(data["settings"]["xp"].get("points", 0)) + amount
 
 async def register_handlers(client: TelegramClient, label: str):
     anti_spam_map: dict[int, deque[float]] = defaultdict(deque)
@@ -190,6 +235,9 @@ async def register_handlers(client: TelegramClient, label: str):
         data = store.load_user(label)
         ensure_settings(data)
         settings = data["settings"]
+        settings["stats"]["messages_seen"] = int(settings["stats"].get("messages_seen", 0)) + 1
+        chat_hits = settings["stats"].setdefault("chat_hits", {})
+        chat_hits[str(event.chat_id)] = int(chat_hits.get(str(event.chat_id), 0)) + 1
 
         msg_cache[(event.chat_id, msg.id)] = {
             "text": msg.raw_text or "",
@@ -200,6 +248,15 @@ async def register_handlers(client: TelegramClient, label: str):
 
         if settings.get("vvwatch", True):
             await save_media_if_needed(client, msg, label)
+
+        if settings.get("lockchat", False) and event.is_private and not event.out:
+            await event.reply("🔒 Chat locked right now.")
+            return
+
+        blockwords = [w.lower() for w in settings.get("blockwords", [])]
+        if any(w in (msg.raw_text or "").lower() for w in blockwords):
+            await event.delete()
+            return
 
         if settings.get("away", {}).get("enabled") and event.is_private and not event.out:
             await event.reply(settings["away"].get("text") or "I'm busy, I'll reply later.")
@@ -226,6 +283,16 @@ async def register_handlers(client: TelegramClient, label: str):
             except Exception:
                 pass
 
+        if settings.get("smart_ai", True) and event.is_private and not event.out and msg.raw_text:
+            text = msg.raw_text.strip()
+            if "?" in text or text.lower().startswith(("how", "why", "what", "who", "when", "can ")):
+                mem = settings.setdefault("chat_memory", {}).setdefault(str(event.sender_id), [])
+                mem.append(f"User: {text}")
+                reply = await ask_free_ai(text, settings.get("persona", "default"), mem)
+                mem.append(f"Bot: {reply}")
+                settings["chat_memory"][str(event.sender_id)] = mem[-8:]
+                await event.reply(reply[:1000])
+
         antispam = settings.get("antispam", {})
         if antispam.get("enabled") and event.is_group:
             uid, now = event.sender_id, time.time()
@@ -238,6 +305,8 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.delete()
                 except Exception:
                     pass
+
+        store.save_user(label, data)
 
     @client.on(events.MessageDeleted())
     async def on_deleted(event):
@@ -295,6 +364,12 @@ async def register_handlers(client: TelegramClient, label: str):
         if not cmd:
             return
         try:
+            data = store.load_user(label)
+            ensure_settings(data)
+            data["settings"]["stats"]["commands"] = int(data["settings"]["stats"].get("commands", 0)) + 1
+            data["settings"]["stats"]["messages_sent"] = int(data["settings"]["stats"].get("messages_sent", 0)) + 1
+            store.save_user(label, data)
+
             if cmd in {"help", "menu"}:
                 await event.edit(HELP_TEXT)
             elif cmd == "ping":
@@ -319,6 +394,151 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit("AFK enabled.")
                 else:
                     await event.edit("Usage: .away <text> OR .away off")
+
+            elif cmd == "persona":
+                mode = arg.strip().lower()
+                if mode not in {"default", "calm", "savage"}:
+                    await event.edit("Usage: .persona default|calm|savage")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["persona"] = mode
+                    await update_user_settings(label, m)
+                    await event.edit(f"Persona set: {mode}")
+
+            elif cmd == "roast":
+                target = arg.strip() or "you"
+                roasts = ["{t} is running on 1% brain battery.", "{t} types like buffering internet.", "{t} got defeated by a captcha."]
+                await event.edit(random.choice(roasts).format(t=target))
+
+            elif cmd == "ship":
+                p2 = arg.split()
+                if len(p2) < 2:
+                    await event.edit("Usage: .ship @user1 @user2")
+                else:
+                    pct = random.randint(40, 100)
+                    await event.edit(f"💘 {p2[0]} + {p2[1]} = {pct}%")
+
+            elif cmd == "rate":
+                who = arg.strip() or "you"
+                await event.edit(f"⭐ {who} is {random.randint(1,10)}/10")
+
+            elif cmd == "vibecheck":
+                await event.edit(random.choice(["✅ Passed vibe check", "⚠️ Suspicious vibes", "🔥 Elite vibes"]))
+
+            elif cmd == "truth":
+                await event.edit(random.choice(["What is your biggest fear?", "What secret are you hiding?", "Who do you miss most?"]))
+
+            elif cmd == "dare":
+                await event.edit(random.choice(["Send your last screenshot.", "Text 'I miss you' to your crush.", "Stay silent for 10 mins."]))
+
+            elif cmd == "lockchat":
+                st = arg.strip().lower()
+                if st not in {"on", "off"}:
+                    await event.edit("Usage: .lockchat on|off")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["lockchat"] = st == "on"
+                    await update_user_settings(label, m)
+                    await event.edit(f"lockchat {st}")
+
+            elif cmd == "blockword":
+                word = arg.strip().lower()
+                if not word:
+                    await event.edit("Usage: .blockword <word>")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        arr = d["settings"].setdefault("blockwords", [])
+                        if word not in arr:
+                            arr.append(word)
+                    await update_user_settings(label, m)
+                    await event.edit(f"Blocked word: {word}")
+
+            elif cmd == "stats":
+                d = store.load_user(label); ensure_settings(d)
+                st = d["settings"]["stats"]
+                top = sorted(st.get("chat_hits", {}).items(), key=lambda x: int(x[1]), reverse=True)[:5]
+                tops = "\n".join([f"{k}: {v}" for k,v in top]) or "none"
+                await event.edit(f"seen={st.get('messages_seen',0)}\nsent={st.get('messages_sent',0)}\ncommands={st.get('commands',0)}\nTop chats:\n{tops}")
+
+            elif cmd == "activity":
+                if not arg.strip():
+                    await event.edit("Usage: .activity @user")
+                else:
+                    await event.edit("Activity tracking per-user detail is limited; use .stats for active chats.")
+
+            elif cmd == "usage":
+                d = store.load_user(label); ensure_settings(d)
+                st = d["settings"]["stats"]
+                await event.edit(f"Usage:\ncommands={st.get('commands',0)}\nmessages_seen={st.get('messages_seen',0)}")
+
+            elif cmd in {"joke", "quote", "facts"}:
+                await event.edit(await fetch_fun_text(cmd))
+
+            elif cmd == "backup":
+                src = USERS_DIR / f"{label}.json"
+                dst = USERS_DIR / f"{label}.backup.json"
+                if src.exists():
+                    dst.write_bytes(src.read_bytes())
+                    await event.edit(f"Backup saved: {dst.name}")
+                else:
+                    await event.edit("No profile found")
+
+            elif cmd == "restore":
+                src = USERS_DIR / f"{label}.backup.json"
+                dst = USERS_DIR / f"{label}.json"
+                if src.exists():
+                    dst.write_bytes(src.read_bytes())
+                    await event.edit("Backup restored.")
+                else:
+                    await event.edit("No backup file.")
+
+            elif cmd == "save":
+                reply = await event.get_reply_message()
+                name = arg.strip().lower()
+                if not reply or not name:
+                    await event.edit("Usage: reply + .save <name>")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"].setdefault("saved_items", {})[name] = {"chat": event.chat_id, "msg_id": reply.id}
+                    await update_user_settings(label, m)
+                    await event.edit(f"Saved key: {name}")
+
+            elif cmd == "get":
+                name = arg.strip().lower()
+                d = store.load_user(label); ensure_settings(d)
+                item = d["settings"].get("saved_items", {}).get(name)
+                if not item:
+                    await event.edit("Not found")
+                else:
+                    await client.forward_messages(event.chat_id, item["msg_id"], from_peer=item["chat"])
+                    await event.delete()
+
+            elif cmd == "list":
+                d = store.load_user(label); ensure_settings(d)
+                keys = list(d["settings"].get("saved_items", {}).keys())
+                await event.edit("Saved keys:\n" + ("\n".join(keys) if keys else "none"))
+
+            elif cmd == "daily":
+                d = store.load_user(label); ensure_settings(d)
+                today = datetime.utcnow().strftime("%Y-%m-%d")
+                xp = d["settings"]["xp"]
+                if xp.get("daily_last") == today:
+                    await event.edit("Daily already claimed.")
+                else:
+                    xp["daily_last"] = today
+                    xp["points"] = int(xp.get("points", 0)) + 25
+                    store.save_user(label, d)
+                    await event.edit("+25 XP daily claimed.")
+
+            elif cmd == "rank":
+                d = store.load_user(label); ensure_settings(d)
+                points = int(d["settings"]["xp"].get("points", 0))
+                level = points // 100 + 1
+                await event.edit(f"XP: {points}\nLevel: {level}")
 
             elif cmd == "schedule":
                 p = arg.split(maxsplit=1)
@@ -503,7 +723,14 @@ async def register_handlers(client: TelegramClient, label: str):
                 if not arg:
                     await event.edit(f"Usage: .{cmd} <text>")
                 else:
-                    await event.edit((await ask_free_ai(arg))[:3900])
+                    d = store.load_user(label); ensure_settings(d)
+                    mem = d["settings"].setdefault("chat_memory", {}).setdefault(str(event.chat_id), [])
+                    mem.append(f"User: {arg}")
+                    out = await ask_free_ai(arg, d["settings"].get("persona", "default"), mem)
+                    mem.append(f"Bot: {out}")
+                    d["settings"]["chat_memory"][str(event.chat_id)] = mem[-8:]
+                    store.save_user(label, d)
+                    await event.edit(out[:3900])
 
             elif cmd == "summarize":
                 text = arg or ((await event.get_reply_message()).raw_text if event.is_reply else "")

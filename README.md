@@ -109,4 +109,4 @@ python main.py
 
 ## Detailed Command Explanations
 
-See `COMMANDS_GUIDE.md` for beginner-friendly explanations of every command.
+See `COMMANDS_GUIDE.md` for beginner-friendly explanations of every command, including smart AI persona mode, viral fun commands, stats, backup/restore, and storage keys.
