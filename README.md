@@ -59,7 +59,7 @@ Use commands in **Saved Messages** or any chat where your account can send messa
 - `.kang <pack_short_name> 😀` – add replied sticker/image to an existing sticker pack
 - `.dl <url>` – download media (YouTube/TikTok/Instagram etc. via `yt-dlp`)
 - `.meta <url>` – media metadata extraction
-- `.gpt <text>` / `.ask <question>` – free AI reply (public endpoint fallback + local fallback)
+- `.gpt <text>` / `.ask <question>` – free AI reply via `POST https://devtoolbox-api.devtoolbox-api.workers.dev/ai/generate`
 - `.summarize <text>` – extractive summarization (local)
 - `.translate <text> to <language>` – translation via libretranslate public endpoint with local fallback
 - `.qr <text>` – generate QR code (free public endpoint)
@@ -69,6 +69,16 @@ Use commands in **Saved Messages** or any chat where your account can send messa
 - `.kick @user`, `.promote @user`, `.demote @user`
 - `.pin` / `.unpin`
 - `.antispam on|off`
+- `.away <text>` / `.away off`
+- `.schedule <10m|HH:MM> <message>`
+- `.filter <word> <response>`
+- `.ghostmode on|off`
+- `.anti-delete on|off`
+- `.anti-edit on|off`
+- `.hideonline on|off`
+- `.vvwatch on|off` / `.vvsave` (reply)
+- `.compress` (reply), `.rename <newname>` (reply), `.tomp4` (reply), `.ocr` (reply)
+- `.playlist <url>`, `.song <name>`, `.warn @user`, `.mute @user <time>`, `.join <link>`
 
 ## Notes on View-Once / Expiring Media
 

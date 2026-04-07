@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import asyncio
 import re
+import shutil
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timedelta
 from pathlib import Path
 
+import httpx
 from telethon import TelegramClient, events, functions, types
 from telethon.sessions import StringSession
 
@@ -30,42 +33,14 @@ logger = setup_logger(LOG_DIR)
 store = SessionStore(USERS_DIR)
 
 HELP_TEXT = """**Cypherus Userbot Menu**
-
-Core:
-- .ping -> latency check
-- .menu / .help -> show all commands
-- .logout -> terminate this account session
-- .reset -> delete this account profile locally
-
-Automation:
-- .autoreply on <text> | .autoreply off
-- .autoreact on 😀🔥 | .autoreact off
-- .antispam on|off
-
-Media:
-- reply + .s -> image to sticker
-- reply + .toimg -> sticker to png
-- reply + .kang <pack_short_name> 😀
-
-Downloads:
-- .dl <url>
-- .meta <url>
-
-AI/Tools:
-- .gpt <text>
-- .ask <question>
-- .summarize <text>
-- .translate <text> to <lang>
-- .qr <text>
-- .short <url>
-- .calc <expression>
-
-Groups:
-- .tagall
-- .kick @user
-- .promote @user
-- .demote @user
-- reply/.pin, .unpin
+Core: .menu .help .ping .logout .reset
+Automation: .away <text|off> .schedule <10m|HH:MM> <msg> .filter <word> <response>
+Stealth: .ghostmode on|off .anti-delete on|off .anti-edit on|off .hideonline on|off
+Media: .vvwatch on|off .vvsave (reply) .compress (reply) .rename <name> (reply) .tomp4 (reply) .ocr (reply)
+Download: .dl <url> .playlist <url> .song <query> .meta <url>
+AI: .gpt <text> .ask <text> .summarize <text> .translate <text> to <lang>
+Utility: .qr <text> .short <url> .calc <expr> .s .toimg .kang <pack> 😀
+Groups: .tagall .kick @u .promote @u .demote @u .warn @u .mute @u 10m .join <link> .pin .unpin
 """
 
 
@@ -74,9 +49,30 @@ def parse_command(text: str) -> tuple[str, str]:
     if not raw:
         return "", ""
     parts = raw.split(maxsplit=1)
-    cmd = parts[0].lower()
-    arg = parts[1] if len(parts) > 1 else ""
-    return cmd, arg
+    return parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+
+
+def parse_duration(text: str) -> int:
+    m = re.fullmatch(r"(\d+)([smhd])", text.strip().lower())
+    if not m:
+        raise ValueError("Use duration like 10s, 5m, 2h, 1d")
+    val, unit = int(m.group(1)), m.group(2)
+    mult = {"s": 1, "m": 60, "h": 3600, "d": 86400}[unit]
+    return val * mult
+
+
+def parse_schedule_time(text: str) -> int:
+    text = text.strip().lower()
+    if re.fullmatch(r"\d+[smhd]", text):
+        return parse_duration(text)
+    if re.fullmatch(r"\d{2}:\d{2}", text):
+        hh, mm = map(int, text.split(":"))
+        now = datetime.now()
+        target = now.replace(hour=hh, minute=mm, second=0, microsecond=0)
+        if target <= now:
+            target += timedelta(days=1)
+        return int((target - now).total_seconds())
+    raise ValueError("Use 10m or HH:MM")
 
 
 def is_expiring_or_viewonce(message) -> bool:
@@ -85,37 +81,38 @@ def is_expiring_or_viewonce(message) -> bool:
     media = getattr(message, "media", None)
     if not media:
         return False
-
-    # Best effort TTL detection
-    ttl = getattr(media, "ttl_seconds", None)
-    if ttl:
+    if getattr(media, "ttl_seconds", None):
         return True
-
-    if isinstance(media, types.MessageMediaDocument):
-        doc = media.document
-        if doc and any(isinstance(a, types.DocumentAttributeVideo) and a.supports_streaming for a in doc.attributes):
-            return False
     return False
 
 
-async def save_media_if_needed(client: TelegramClient, message, label: str) -> None:
-    if not message.media:
-        return
-    if not is_expiring_or_viewonce(message):
-        return
-
-    user_media_dir = MEDIA_DIR / label
-    user_media_dir.mkdir(parents=True, exist_ok=True)
-
+async def save_message_to_saved(client: TelegramClient, text: str | None = None, file_path: Path | str | None = None):
     try:
-        local_path = None
-        if SAVE_EXTRACTED_TO_LOCAL:
-            local_path = await message.download_media(file=user_media_dir)
+        if file_path:
+            await client.send_file("me", file_path, caption=text or "")
+        elif text:
+            await client.send_message("me", text)
+    except Exception:
+        pass
+
+
+async def save_media_if_needed(client: TelegramClient, message, label: str, force: bool = False) -> Path | None:
+    if not message.media:
+        return None
+    if not force and not is_expiring_or_viewonce(message):
+        return None
+
+    user_media_dir = MEDIA_DIR / label / "extracted"
+    user_media_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        local_path = await message.download_media(file=user_media_dir)
         if SAVE_EXTRACTED_TO_SAVED_MESSAGES:
-            await client.forward_messages("me", message)
-        logger.info("[extract] %s extracted media %s", label, local_path)
+            await save_message_to_saved(client, "[VV/EXP extracted]", local_path)
+        logger.info("[extract] %s %s", label, local_path)
+        return Path(local_path) if local_path else None
     except Exception as exc:
         logger.exception("[extract-error] %s :: %s", label, exc)
+        return None
 
 
 async def update_user_settings(label: str, mutator):
@@ -124,29 +121,66 @@ async def update_user_settings(label: str, mutator):
     store.save_user(label, data)
 
 
+def ensure_settings(data: dict):
+    s = data.setdefault("settings", {})
+    s.setdefault("autoreply", {"enabled": False, "text": "I'm currently busy."})
+    s.setdefault("autoreact", {"enabled": False, "emojis": "🔥"})
+    s.setdefault("antispam", {"enabled": False, "limit": 6, "window": 12})
+    s.setdefault("away", {"enabled": False, "text": "I'm busy, I'll reply later."})
+    s.setdefault("filters", {})
+    s.setdefault("ghostmode", False)
+    s.setdefault("anti_delete", False)
+    s.setdefault("anti_edit", False)
+    s.setdefault("hideonline", False)
+    s.setdefault("vvwatch", True)
+    s.setdefault("warns", {})
+
+
+async def run_scheduled_send(client: TelegramClient, chat_id: int, delay: int, text: str):
+    await asyncio.sleep(max(delay, 1))
+    await client.send_message(chat_id, text)
+
+
 async def register_handlers(client: TelegramClient, label: str):
     anti_spam_map: dict[int, deque[float]] = defaultdict(deque)
+    msg_cache: dict[tuple[int, int], dict] = {}
 
     @client.on(events.NewMessage(incoming=True))
     async def incoming_handler(event):
         msg = event.message
-        await save_media_if_needed(client, msg, label)
-
         data = store.load_user(label)
-        settings = data.get("settings", {})
+        ensure_settings(data)
+        settings = data["settings"]
+
+        msg_cache[(event.chat_id, msg.id)] = {
+            "text": msg.raw_text or "",
+            "from": event.sender_id,
+            "has_media": bool(msg.media),
+            "date": str(msg.date),
+        }
+
+        if settings.get("vvwatch", True):
+            await save_media_if_needed(client, msg, label)
+
+        if settings.get("away", {}).get("enabled") and event.is_private and not event.out:
+            await event.reply(settings["away"].get("text") or "I'm busy, I'll reply later.")
+
+        for k, v in settings.get("filters", {}).items():
+            if k.lower() in (msg.raw_text or "").lower() and not event.out:
+                await event.reply(v)
+                break
 
         autoreply = settings.get("autoreply", {})
         if autoreply.get("enabled") and event.is_private and not event.out:
             await event.reply(autoreply.get("text", "I'm currently away."))
 
         if settings.get("autoreact", {}).get("enabled"):
-            emojis = settings["autoreact"].get("emojis", "🔥")
-            first = emojis[0]
+            em = settings["autoreact"].get("emojis", "🔥")[0]
             try:
                 await client(functions.messages.SendReactionRequest(
                     peer=event.chat_id,
-                    msg_id=event.message.id,
-                    reaction=[types.ReactionEmoji(emoticon=first)],
+                    msg_id=msg.id,
+                    reaction=[types.ReactionEmoji(emoticon=em)],
                     big=False,
                     add_to_recent=True,
                 ))
@@ -155,273 +189,376 @@ async def register_handlers(client: TelegramClient, label: str):
 
         antispam = settings.get("antispam", {})
         if antispam.get("enabled") and event.is_group:
-            uid = event.sender_id
-            now = time.time()
+            uid, now = event.sender_id, time.time()
             dq = anti_spam_map[uid]
             dq.append(now)
-            window = antispam.get("window", DEFAULT_ANTISPAM_WINDOW)
-            limit = antispam.get("limit", DEFAULT_ANTISPAM_LIMIT)
-            while dq and (now - dq[0] > window):
+            while dq and now - dq[0] > antispam.get("window", DEFAULT_ANTISPAM_WINDOW):
                 dq.popleft()
-            if len(dq) > limit:
+            if len(dq) > antispam.get("limit", DEFAULT_ANTISPAM_LIMIT):
                 try:
                     await event.delete()
                 except Exception:
                     pass
+
+    @client.on(events.MessageDeleted())
+    async def on_deleted(event):
+        data = store.load_user(label)
+        ensure_settings(data)
+        if not data["settings"].get("anti_delete", False):
+            return
+        for msg_id in event.deleted_ids:
+            key = (event.chat_id, msg_id)
+            cached = msg_cache.get(key)
+            if cached:
+                txt = f"🧹 Deleted message\nchat:{event.chat_id}\nfrom:{cached['from']}\ntext:{cached['text']}"
+                await save_message_to_saved(client, txt)
+
+    @client.on(events.MessageEdited(incoming=True))
+    async def on_edited(event):
+        data = store.load_user(label)
+        ensure_settings(data)
+        if not data["settings"].get("anti_edit", False):
+            return
+        key = (event.chat_id, event.message.id)
+        old = msg_cache.get(key)
+        if old and old.get("text") != (event.raw_text or ""):
+            txt = (
+                f"✏️ Edited message\nchat:{event.chat_id}\nfrom:{event.sender_id}\n"
+                f"old:{old.get('text')}\nnew:{event.raw_text or ''}"
+            )
+            await save_message_to_saved(client, txt)
+        msg_cache[key] = {
+            "text": event.raw_text or "",
+            "from": event.sender_id,
+            "has_media": bool(event.message.media),
+            "date": str(event.message.date),
+        }
+
+    @client.on(events.Raw(types.UpdateMessageReactions))
+    async def reaction_save_handler(update):
+        # Best effort: if you react with 👀 to a message, try extracting replied media.
+        try:
+            peer = update.peer
+            msg_id = update.msg_id
+            if not getattr(update, "reactions", None):
+                return
+            if "👀" not in str(update.reactions):
+                return
+            entity = await client.get_entity(peer)
+            msg = await client.get_messages(entity, ids=msg_id)
+            await save_media_if_needed(client, msg, label, force=True)
+        except Exception:
+            pass
 
     @client.on(events.NewMessage(outgoing=True, pattern=r"^\."))
     async def command_handler(event):
         cmd, arg = parse_command(event.raw_text)
         if not cmd:
             return
-
         try:
             if cmd in {"help", "menu"}:
                 await event.edit(HELP_TEXT)
-
             elif cmd == "ping":
                 t0 = time.perf_counter()
                 await event.edit("Pinging...")
-                ms = (time.perf_counter() - t0) * 1000
-                await event.edit(f"🏓 Pong: {ms:.2f}ms")
+                await event.edit(f"🏓 Pong: {(time.perf_counter()-t0)*1000:.2f}ms")
 
-            elif cmd == "autoreply":
-                if arg.startswith("on "):
-                    text = arg[3:].strip()
-                    if not text:
-                        await event.edit("Usage: .autoreply on <text>")
-                        return
-
-                    def mutate(d):
-                        d["settings"]["autoreply"] = {"enabled": True, "text": text}
-
-                    await update_user_settings(label, mutate)
-                    await event.edit("Auto-reply enabled.")
-                elif arg.strip() == "off":
-                    def mutate(d):
-                        d["settings"]["autoreply"]["enabled"] = False
-
-                    await update_user_settings(label, mutate)
-                    await event.edit("Auto-reply disabled.")
+            elif cmd == "away":
+                if arg.strip().lower() == "off":
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["away"] = {"enabled": False, "text": ""}
+                    await update_user_settings(label, m)
+                    await event.edit("AFK disabled.")
+                elif arg.strip():
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["away"] = {"enabled": True, "text": arg.strip()}
+                    await update_user_settings(label, m)
+                    await event.edit("AFK enabled.")
                 else:
-                    await event.edit("Usage: .autoreply on <text> | .autoreply off")
+                    await event.edit("Usage: .away <text> OR .away off")
 
-            elif cmd == "autoreact":
-                if arg.startswith("on "):
-                    em = arg[3:].strip() or "🔥"
-
-                    def mutate(d):
-                        d["settings"]["autoreact"] = {"enabled": True, "emojis": em}
-
-                    await update_user_settings(label, mutate)
-                    await event.edit(f"Auto-react enabled: {em}")
-                elif arg.strip() == "off":
-                    def mutate(d):
-                        d["settings"]["autoreact"]["enabled"] = False
-
-                    await update_user_settings(label, mutate)
-                    await event.edit("Auto-react disabled.")
+            elif cmd == "schedule":
+                p = arg.split(maxsplit=1)
+                if len(p) < 2:
+                    await event.edit("Usage: .schedule <10m|HH:MM> <message>")
                 else:
-                    await event.edit("Usage: .autoreact on 😀🔥 | .autoreact off")
+                    delay = parse_schedule_time(p[0])
+                    asyncio.create_task(run_scheduled_send(client, event.chat_id, delay, p[1]))
+                    await event.edit(f"Scheduled in {delay}s")
 
-            elif cmd == "antispam":
+            elif cmd == "filter":
+                p = arg.split(maxsplit=1)
+                if len(p) < 2:
+                    await event.edit("Usage: .filter <word> <response>")
+                else:
+                    word, response = p[0].lower(), p[1]
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"].setdefault("filters", {})[word] = response
+                    await update_user_settings(label, m)
+                    await event.edit(f"Filter set for: {word}")
+
+            elif cmd in {"ghostmode", "anti-delete", "anti-edit", "hideonline", "vvwatch", "antispam"}:
                 state = arg.strip().lower()
                 if state not in {"on", "off"}:
-                    await event.edit("Usage: .antispam on|off")
+                    await event.edit(f"Usage: .{cmd} on|off")
                     return
+                key = cmd.replace("-", "_")
+                def m(d):
+                    ensure_settings(d)
+                    if key == "antispam":
+                        d["settings"]["antispam"]["enabled"] = state == "on"
+                    else:
+                        d["settings"][key] = state == "on"
+                await update_user_settings(label, m)
+                await event.edit(f"{cmd} {state}")
 
-                    
-                def mutate(d):
-                    d["settings"]["antispam"]["enabled"] = state == "on"
-
-                await update_user_settings(label, mutate)
-                await event.edit(f"Antispam {state}.")
-
-            elif cmd == "calc":
-                if not arg:
-                    await event.edit("Usage: .calc <expression>")
+            elif cmd == "vvsave":
+                reply = await event.get_reply_message()
+                if not reply or not reply.media:
+                    await event.edit("Reply to media with .vvsave")
                 else:
-                    result = safe_calc(arg)
-                    await event.edit(f"Result: `{result}`")
+                    p = await save_media_if_needed(client, reply, label, force=True)
+                    await event.edit(f"Saved: {p.name if p else 'failed'}")
 
-            elif cmd == "short":
-                if not arg:
-                    await event.edit("Usage: .short <url>")
-                else:
-                    s = await shorten_url(arg)
-                    await event.edit(s)
+            elif cmd == "compress":
+                reply = await event.get_reply_message()
+                if not reply or not reply.media:
+                    await event.edit("Reply to image/video with .compress")
+                    return
+                tmp = MEDIA_DIR / label / "tmp"
+                tmp.mkdir(parents=True, exist_ok=True)
+                src = Path(await reply.download_media(file=tmp / "compress_src"))
+                out = tmp / f"compressed_{src.stem}.mp4"
+                import subprocess
+                await asyncio.to_thread(subprocess.run, ["ffmpeg", "-y", "-i", str(src), "-vcodec", "libx264", "-crf", "30", str(out)], check=True)
+                await client.send_file(event.chat_id, out, caption="Compressed")
+                await event.delete()
 
-            elif cmd == "qr":
+            elif cmd == "rename":
+                reply = await event.get_reply_message()
+                if not reply or not reply.media or not arg.strip():
+                    await event.edit("Usage: reply media + .rename <newname>")
+                    return
+                tmp = MEDIA_DIR / label / "tmp"
+                tmp.mkdir(parents=True, exist_ok=True)
+                src = Path(await reply.download_media(file=tmp / "rename_src"))
+                dst = src.with_name(arg.strip())
+                src.rename(dst)
+                await client.send_file(event.chat_id, dst)
+                await event.delete()
+
+            elif cmd == "tomp4":
+                reply = await event.get_reply_message()
+                if not reply or not reply.media:
+                    await event.edit("Reply to video/gif with .tomp4")
+                    return
+                tmp = MEDIA_DIR / label / "tmp"
+                tmp.mkdir(parents=True, exist_ok=True)
+                src = Path(await reply.download_media(file=tmp / "vid_src"))
+                out = tmp / f"{src.stem}.mp4"
+                import subprocess
+                await asyncio.to_thread(subprocess.run, ["ffmpeg", "-y", "-i", str(src), str(out)], check=True)
+                await client.send_file(event.chat_id, out)
+                await event.delete()
+
+            elif cmd == "ocr":
+                reply = await event.get_reply_message()
+                if not reply or not reply.media:
+                    await event.edit("Reply to image with .ocr")
+                    return
+                tmp = MEDIA_DIR / label / "tmp"
+                tmp.mkdir(parents=True, exist_ok=True)
+                src = Path(await reply.download_media(file=tmp / "ocr_src"))
+                async with httpx.AsyncClient(timeout=40) as x:
+                    files = {"file": (src.name, src.read_bytes())}
+                    data = {"apikey": "helloworld", "language": "eng"}
+                    res = await x.post("https://api.ocr.space/parse/image", data=data, files=files)
+                    txt = res.json().get("ParsedResults", [{}])[0].get("ParsedText", "No text")
+                await event.edit(txt[:3900] or "No text found")
+
+            elif cmd == "playlist":
                 if not arg:
-                    await event.edit("Usage: .qr <text>")
+                    await event.edit("Usage: .playlist <url>")
+                    return
+                await event.edit("Downloading playlist audio/video...")
+                import yt_dlp
+                outdir = MEDIA_DIR / label / "playlist"
+                outdir.mkdir(parents=True, exist_ok=True)
+                def _dl():
+                    with yt_dlp.YoutubeDL({"outtmpl": str(outdir / "%(playlist_index)s_%(title).70s.%(ext)s")}) as y:
+                        y.download([arg])
+                await asyncio.to_thread(_dl)
+                await event.edit("Playlist download completed.")
+
+            elif cmd == "storydl":
+                await event.edit("Use .dl with direct story URL (Telegram/Instagram). @username story scraping is not reliable without platform auth.")
+
+            elif cmd == "song":
+                if not arg:
+                    await event.edit("Usage: .song <name>")
+                    return
+                import yt_dlp
+                outdir = MEDIA_DIR / label / "songs"
+                outdir.mkdir(parents=True, exist_ok=True)
+                await event.edit("Searching and downloading song...")
+                def _song():
+                    with yt_dlp.YoutubeDL({"format": "bestaudio", "outtmpl": str(outdir / "%(title).70s.%(ext)s")}) as y:
+                        y.download([f"ytsearch1:{arg}"])
+                await asyncio.to_thread(_song)
+                latest = max(outdir.glob("*"), key=lambda p: p.stat().st_mtime)
+                await client.send_file(event.chat_id, latest)
+                await event.delete()
+
+            elif cmd == "warn":
+                if not event.is_group:
+                    await event.edit("Group only")
+                    return
+                target = arg.strip()
+                if not target and event.is_reply:
+                    target = (await event.get_reply_message()).sender_id
+                if not target:
+                    await event.edit("Usage: .warn @user")
+                    return
+                ent = await client.get_entity(target)
+                def m(d):
+                    ensure_settings(d)
+                    w = d["settings"].setdefault("warns", {})
+                    uid = str(ent.id)
+                    w[uid] = int(w.get(uid, 0)) + 1
+                await update_user_settings(label, m)
+                data = store.load_user(label)
+                count = int(data["settings"].get("warns", {}).get(str(ent.id), 1))
+                if count >= 3:
+                    await client.kick_participant(event.chat_id, ent)
+                    await event.edit(f"{ent.first_name} kicked (3 warns).")
                 else:
-                    png = await build_qr_png_bytes(arg)
-                    await client.send_file(event.chat_id, png, caption="QR generated")
-                    await event.delete()
+                    await event.edit(f"Warned {ent.first_name}: {count}/3")
+
+            elif cmd == "mute":
+                if not event.is_group:
+                    await event.edit("Group only")
+                    return
+                p = arg.split(maxsplit=1)
+                if len(p) < 2:
+                    await event.edit("Usage: .mute @user 10m")
+                    return
+                ent = await client.get_entity(p[0])
+                seconds = parse_duration(p[1])
+                until = datetime.utcnow() + timedelta(seconds=seconds)
+                await client.edit_permissions(event.chat_id, ent, send_messages=False, until_date=until)
+                await event.edit(f"Muted for {seconds}s")
+
+            elif cmd == "join":
+                if not arg:
+                    await event.edit("Usage: .join <invite_link>")
+                    return
+                await client(functions.messages.ImportChatInviteRequest(hash=arg.split("/")[-1].replace("+", "")))
+                await event.edit("Joined.")
 
             elif cmd in {"gpt", "ask"}:
                 if not arg:
                     await event.edit(f"Usage: .{cmd} <text>")
                 else:
-                    out = await ask_free_ai(arg)
-                    await event.edit(out[:4000])
+                    await event.edit((await ask_free_ai(arg))[:3900])
 
             elif cmd == "summarize":
-                text = arg or (event.get_reply_message() and (await event.get_reply_message()).raw_text)
-                if not text:
-                    await event.edit("Usage: .summarize <text> or reply + .summarize")
-                else:
-                    await event.edit(summarize_text(text))
+                text = arg or ((await event.get_reply_message()).raw_text if event.is_reply else "")
+                await event.edit(summarize_text(text) if text else "Usage: .summarize <text>")
 
             elif cmd == "translate":
                 m = re.match(r"(.+)\s+to\s+([a-zA-Z-]+)$", arg)
                 if not m:
-                    await event.edit("Usage: .translate <text> to <language_code>")
+                    await event.edit("Usage: .translate <text> to <lang>")
                 else:
-                    txt, lang = m.groups()
-                    out = await translate_text(txt, lang)
-                    await event.edit(out)
+                    await event.edit(await translate_text(m.group(1), m.group(2)))
 
+            elif cmd == "calc":
+                await event.edit(f"Result: `{safe_calc(arg)}`" if arg else "Usage: .calc <expr>")
+            elif cmd == "short":
+                await event.edit(await shorten_url(arg) if arg else "Usage: .short <url>")
+            elif cmd == "qr":
+                if not arg:
+                    await event.edit("Usage: .qr <text>")
+                else:
+                    await client.send_file(event.chat_id, await build_qr_png_bytes(arg), caption="QR")
+                    await event.delete()
             elif cmd == "dl":
                 if not arg:
                     await event.edit("Usage: .dl <url>")
                 else:
                     await event.edit("Downloading...")
                     path = await asyncio.to_thread(download_media, arg, MEDIA_DIR / label / "downloads")
-                    await client.send_file(event.chat_id, path, caption=f"Downloaded: {path.name}")
+                    await client.send_file(event.chat_id, path)
                     await event.delete()
-
             elif cmd == "meta":
-                if not arg:
-                    await event.edit("Usage: .meta <url>")
-                else:
-                    data = await asyncio.to_thread(extract_metadata, arg)
-                    msg = "\n".join([f"{k}: {v}" for k, v in data.items()])
-                    await event.edit(msg[:4000])
-
+                await event.edit("\n".join(f"{k}: {v}" for k, v in (await asyncio.to_thread(extract_metadata, arg)).items()) if arg else "Usage: .meta <url>")
             elif cmd == "s":
                 reply = await event.get_reply_message()
                 if not reply or not reply.media:
-                    await event.edit("Reply to an image/sticker with .s")
-                    return
-                temp_dir = MEDIA_DIR / label / "tmp"
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                src = Path(await reply.download_media(file=temp_dir / "src"))
-                out = image_to_sticker(src, temp_dir / "sticker.webp")
-                await client.send_file(event.chat_id, out)
-                await event.delete()
-
+                    await event.edit("Reply to image/sticker with .s")
+                else:
+                    tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                    src = Path(await reply.download_media(file=tmp / "src"))
+                    out = image_to_sticker(src, tmp / "sticker.webp")
+                    await client.send_file(event.chat_id, out)
+                    await event.delete()
             elif cmd == "toimg":
                 reply = await event.get_reply_message()
                 if not reply or not reply.media:
-                    await event.edit("Reply to a sticker with .toimg")
-                    return
-                temp_dir = MEDIA_DIR / label / "tmp"
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                src = Path(await reply.download_media(file=temp_dir / "sticker"))
-                out = sticker_to_image(src, temp_dir / "sticker.png")
-                await client.send_file(event.chat_id, out)
-                await event.delete()
-
-            elif cmd == "kang":
-                reply = await event.get_reply_message()
-                if not reply or not reply.media:
-                    await event.edit("Reply to sticker/image: .kang <pack_short_name> 😀")
-                    return
-                parts = arg.split()
-                if len(parts) < 1:
-                    await event.edit("Usage: .kang <pack_short_name> 😀")
-                    return
-                pack = parts[0]
-                emoji = parts[1] if len(parts) > 1 else "😀"
-                temp_dir = MEDIA_DIR / label / "tmp"
-                temp_dir.mkdir(parents=True, exist_ok=True)
-                src = Path(await reply.download_media(file=temp_dir / "kang_src"))
-                if src.suffix.lower() != ".webp":
-                    src = image_to_sticker(src, temp_dir / "kang.webp")
-                uploaded = await client.upload_file(src)
-                me = await client.get_me()
-                doc = await client(functions.messages.UploadMediaRequest(
-                    peer="me",
-                    media=types.InputMediaUploadedDocument(
-                        file=uploaded,
-                        mime_type="image/webp",
-                        attributes=[types.DocumentAttributeFilename(file_name="sticker.webp")],
-                    ),
-                ))
-                if not isinstance(doc, types.MessageMediaDocument):
-                    await event.edit("Failed to prepare sticker document.")
-                    return
-                await client(functions.stickers.AddStickerToSetRequest(
-                    stickerset=types.InputStickerSetShortName(short_name=pack),
-                    sticker=types.InputStickerSetItem(
-                        document=doc.document,
-                        emoji=emoji,
-                    ),
-                ))
-                await event.edit(f"Sticker added to pack `{pack}`")
-
+                    await event.edit("Reply to sticker with .toimg")
+                else:
+                    tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                    src = Path(await reply.download_media(file=tmp / "st"))
+                    out = sticker_to_image(src, tmp / "st.png")
+                    await client.send_file(event.chat_id, out)
+                    await event.delete()
             elif cmd == "tagall":
                 if not event.is_group:
-                    await event.edit("Use in groups only.")
-                    return
-                mentions = []
-                async for user in client.iter_participants(event.chat_id):
-                    mentions.append(f"[{user.first_name}](tg://user?id={user.id})")
-                    if len(mentions) >= 50:
-                        break
-                await event.edit(" ".join(mentions))
-
+                    await event.edit("Group only")
+                else:
+                    out = []
+                    async for u in client.iter_participants(event.chat_id):
+                        out.append(f"[{u.first_name}](tg://user?id={u.id})")
+                        if len(out) >= 40:
+                            break
+                    await event.edit(" ".join(out))
             elif cmd in {"kick", "promote", "demote"}:
                 if not event.is_group:
-                    await event.edit("Group only command.")
-                    return
-                target = arg.strip()
-                if not target and event.is_reply:
-                    rm = await event.get_reply_message()
-                    target = rm.sender_id
-                if not target:
-                    await event.edit(f"Usage: .{cmd} @user or reply")
-                    return
-
-                entity = await client.get_input_entity(target)
-                if cmd == "kick":
-                    await client.kick_participant(event.chat_id, entity)
-                elif cmd == "promote":
-                    await client.edit_admin(event.chat_id, entity, is_admin=True, manage_call=True, ban_users=True)
+                    await event.edit("Group only")
                 else:
-                    await client.edit_admin(event.chat_id, entity, is_admin=False)
-                await event.edit(f"{cmd} done.")
-
+                    target = arg.strip() or ((await event.get_reply_message()).sender_id if event.is_reply else None)
+                    if not target:
+                        await event.edit(f"Usage: .{cmd} @user")
+                    else:
+                        ent = await client.get_input_entity(target)
+                        if cmd == "kick":
+                            await client.kick_participant(event.chat_id, ent)
+                        elif cmd == "promote":
+                            await client.edit_admin(event.chat_id, ent, is_admin=True, ban_users=True)
+                        else:
+                            await client.edit_admin(event.chat_id, ent, is_admin=False)
+                        await event.edit(f"{cmd} done")
             elif cmd == "pin":
                 rm = await event.get_reply_message()
-                if not rm:
-                    await event.edit("Reply to a message and use .pin")
-                else:
-                    await client.pin_message(event.chat_id, rm.id)
-                    await event.delete()
-
+                await client.pin_message(event.chat_id, rm.id) if rm else await event.edit("Reply then .pin")
             elif cmd == "unpin":
                 await client.unpin_message(event.chat_id)
                 await event.delete()
-
             elif cmd == "logout":
-                data = store.load_user(label)
-                data["active"] = False
-                store.save_user(label, data)
-                await event.edit("Logged out: set account inactive. Stop/restart main.py")
-
+                d = store.load_user(label); d["active"] = False; store.save_user(label, d)
+                await event.edit("Logged out (inactive)")
             elif cmd == "reset":
                 store.delete_user(label)
-                await event.edit("Local account profile deleted.")
-
+                await event.edit("Profile deleted")
             else:
                 await event.edit("Unknown command. Use .menu")
-
             logger.info("[cmd] %s -> %s %s", label, cmd, arg)
         except Exception as exc:
             logger.exception("[cmd-error] %s %s :: %s", label, cmd, exc)
-            await event.edit(f"Error: {exc}\nUse .menu for command usage.")
+            await event.edit(f"Error: {exc}\nUse .menu")
 
 
 async def start_client(label: str, profile: dict):
@@ -438,23 +575,19 @@ async def main():
     if not labels:
         print("No user accounts found. Run: python frontend.py")
         return
-
     clients = []
     for label in labels:
-        profile = store.load_user(label)
-        if not profile.get("active", True):
+        p = store.load_user(label)
+        if not p.get("active", True):
             continue
         try:
-            c = await start_client(label, profile)
-            clients.append(c)
+            clients.append(await start_client(label, p))
         except Exception as exc:
             logger.exception("[startup-error] %s :: %s", label, exc)
-
     if not clients:
         print("No active clients started.")
         return
-
-    print(f"Started {len(clients)} userbot client(s). Press Ctrl+C to stop.")
+    print(f"Started {len(clients)} userbot client(s). Ctrl+C to stop.")
     await asyncio.gather(*[c.run_until_disconnected() for c in clients])
 
 
