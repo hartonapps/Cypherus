@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+users/*.json
+users/.master.key
+logs/
+downloads/
