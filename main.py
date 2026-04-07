@@ -93,6 +93,63 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 """
 
 
+
+COMMAND_HELP = {
+    "menu": "Usage: .menu\nShow full command menu.",
+    "ping": "Usage: .ping\nCheck response speed.",
+    "away": "Usage: .away <text> | .away off\nEnable/disable AFK auto-reply.",
+    "schedule": "Usage: .schedule <10m|HH:MM> <message>\nSend a message later.",
+    "filter": "Usage: .filter <word> <response>\nAuto-reply when keyword is detected.",
+    "vvwatch": "Usage: .vvwatch on|off\nAuto-monitor expiring/view-once media.",
+    "vvsave": "Usage: reply media + .vvsave\nForce save replied media to Saved Messages.",
+    "anti-delete": "Usage: .anti-delete on|off\nRecover deleted message text from cache.",
+    "anti-edit": "Usage: .anti-edit on|off\nLog old/new message text on edits.",
+    "lockchat": "Usage: .lockchat on|off\nBlock private incoming chats with lock reply.",
+    "blockword": "Usage: .blockword <word>\nDelete messages containing that word.",
+    "persona": "Usage: .persona default|calm|savage\nSwitch AI personality mode.",
+    "gpt": "Usage: .gpt <text>\nAsk AI with current persona + memory.",
+    "ask": "Usage: .ask <text>\nAlias of .gpt.",
+    "summarize": "Usage: .summarize <text> or reply + .summarize\nSummarize text.",
+    "translate": "Usage: .translate <text> to <lang>\nTranslate text.",
+    "dl": "Usage: .dl <url>\nDownload media from URL.",
+    "playlist": "Usage: .playlist <url>\nDownload playlist.",
+    "song": "Usage: .song <query>\nSearch and download first song result.",
+    "meta": "Usage: .meta <url>\nShow metadata.",
+    "compress": "Usage: reply media + .compress\nCompress and resend media.",
+    "rename": "Usage: reply media + .rename <newname>\nRename and resend media.",
+    "tomp4": "Usage: reply video/gif + .tomp4\nConvert media to MP4.",
+    "ocr": "Usage: reply image + .ocr\nExtract text from image.",
+    "save": "Usage: reply message + .save <name>\nSave message reference by key.",
+    "get": "Usage: .get <name>\nRecall saved message by key.",
+    "list": "Usage: .list\nList saved keys.",
+    "stats": "Usage: .stats\nShow usage counters + active chats.",
+    "usage": "Usage: .usage\nQuick usage summary.",
+    "daily": "Usage: .daily\nClaim daily XP.",
+    "rank": "Usage: .rank\nShow XP + level.",
+    "roast": "Usage: .roast @user\nSend fun roast.",
+    "ship": "Usage: .ship @u1 @u2\nGenerate compatibility score.",
+    "rate": "Usage: .rate @user\nRate user 1-10.",
+    "vibecheck": "Usage: .vibecheck\nRandom vibe result.",
+    "truth": "Usage: .truth\nTruth prompt.",
+    "dare": "Usage: .dare\nDare prompt.",
+    "backup": "Usage: .backup\nCreate local profile backup.",
+    "restore": "Usage: .restore\nRestore local profile backup.",
+}
+
+
+def resolve_help(query: str) -> str:
+    q = query.strip().lower().lstrip('.')
+    if not q:
+        return HELP_TEXT + "\n\nTip: .help <command>  (example: .help vvwatch)"
+    if q in COMMAND_HELP:
+        return f"**.{q}**\n{COMMAND_HELP[q]}"
+    matches = [k for k in COMMAND_HELP if q in k]
+    if matches:
+        short = "\n".join([f"• .{m}" for m in matches[:10]])
+        return f"Command not exact. Did you mean:\n{short}"
+    return "Command not found. Use .menu"
+
+
 def parse_command(text: str) -> tuple[str, str]:
     raw = text[len(COMMAND_PREFIX) :].strip()
     if not raw:
@@ -371,7 +428,7 @@ async def register_handlers(client: TelegramClient, label: str):
             store.save_user(label, data)
 
             if cmd in {"help", "menu"}:
-                await event.edit(HELP_TEXT)
+                await event.edit(resolve_help(arg if cmd == "help" else ""))
             elif cmd == "ping":
                 t0 = time.perf_counter()
                 msg = await event.respond("🏓 Pong...")
