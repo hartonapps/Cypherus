@@ -105,3 +105,8 @@ pip install -r requirements.txt
 python frontend.py
 python main.py
 ```
+
+
+## Detailed Command Explanations
+
+See `COMMANDS_GUIDE.md` for beginner-friendly explanations of every command.

@@ -32,15 +32,54 @@ from utils.session_store import SessionStore
 logger = setup_logger(LOG_DIR)
 store = SessionStore(USERS_DIR)
 
-HELP_TEXT = """**Cypherus Userbot Menu**
-Core: .menu .help .ping .logout .reset
-Automation: .away <text|off> .schedule <10m|HH:MM> <msg> .filter <word> <response>
-Stealth: .ghostmode on|off .anti-delete on|off .anti-edit on|off .hideonline on|off
-Media: .vvwatch on|off .vvsave (reply) .compress (reply) .rename <name> (reply) .tomp4 (reply) .ocr (reply)
-Download: .dl <url> .playlist <url> .song <query> .meta <url>
-AI: .gpt <text> .ask <text> .summarize <text> .translate <text> to <lang>
-Utility: .qr <text> .short <url> .calc <expr> .s .toimg .kang <pack> 😀
-Groups: .tagall .kick @u .promote @u .demote @u .warn @u .mute @u 10m .join <link> .pin .unpin
+HELP_TEXT = """**🚀 Cypherus Userbot Menu**
+
+**Core**
+• `.menu` / `.help` → show this menu
+• `.ping` → check userbot response speed
+• `.logout` → set this account inactive
+• `.reset` → delete local profile/session file
+
+**Automation**
+• `.away <text>` / `.away off` → AFK auto-reply
+• `.schedule <10m|HH:MM> <message>` → send later
+• `.filter <word> <response>` → keyword auto-reply
+
+**Privacy / Logs**
+• `.ghostmode on|off`
+• `.anti-delete on|off`
+• `.anti-edit on|off`
+• `.hideonline on|off`
+
+**Media**
+• `.vvwatch on|off` → monitor expiring/view-once
+• Reply media + `.vvsave` → force-save to Saved Messages
+• Reply media + `.compress`
+• Reply media + `.rename <newname>`
+• Reply media + `.tomp4`
+• Reply image + `.ocr`
+• Reply image + `.s` | Reply sticker + `.toimg`
+
+**Downloads**
+• `.dl <url>`
+• `.playlist <url>`
+• `.song <query>`
+• `.meta <url>`
+
+**AI / Tools**
+• `.gpt <text>` / `.ask <text>`
+• `.summarize <text>`
+• `.translate <text> to <lang>`
+• `.qr <text>`
+• `.short <url>`
+• `.calc <expression>`
+
+**Group Admin**
+• `.tagall`
+• `.kick @user` `.promote @user` `.demote @user`
+• `.warn @user` `.mute @user 10m`
+• `.join <invite_link>`
+• `.pin` / `.unpin`
 """
 
 
@@ -260,8 +299,10 @@ async def register_handlers(client: TelegramClient, label: str):
                 await event.edit(HELP_TEXT)
             elif cmd == "ping":
                 t0 = time.perf_counter()
-                await event.edit("Pinging...")
-                await event.edit(f"🏓 Pong: {(time.perf_counter()-t0)*1000:.2f}ms")
+                msg = await event.respond("🏓 Pong...")
+                ms = (time.perf_counter() - t0) * 1000
+                await msg.edit(f"🏓 Pong: {ms:.2f} ms")
+                await event.delete()
 
             elif cmd == "away":
                 if arg.strip().lower() == "off":
