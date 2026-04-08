@@ -77,6 +77,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.qr <text>`
 • `.short <url>`
 • `.calc <expression>`
+• `.msg <username/group> <text>` or reply + `.msg <target>`
 
 **Group Admin**
 • `.tagall`
@@ -122,6 +123,7 @@ COMMAND_HELP = {
     "ask": "Usage: .ask <text>\nAlias of .gpt.",
     "summarize": "Usage: .summarize <text> or reply + .summarize\nSummarize text.",
     "translate": "Usage: .translate <text> to <lang>\nTranslate text.",
+    "msg": "Usage: .msg <target> <text> OR reply + .msg <target>\nSend message/media to user/group.",
     "dl": "Usage: .dl <url>\nDownload media from URL.",
     "playlist": "Usage: .playlist <url>\nDownload playlist.",
     "song": "Usage: .song <query>\nSearch and download first song result.",
@@ -382,7 +384,7 @@ async def story_auto_worker(client: TelegramClient, label: str):
                 if stories_api:
                     async for dlg in client.iter_dialogs():
                         if not dlg.is_user:
-                            continue
+                            return
                         try:
                             req = stories_api.ReadStoriesRequest(peer=dlg.entity, max_id=2_147_483_647)
                             await client(req)
@@ -399,7 +401,7 @@ async def story_auto_worker(client: TelegramClient, label: str):
                                             if sid:
                                                 await client(send_react(peer=dlg.entity, story_id=sid, reaction=types.ReactionEmoji(emoticon="❤️"), add_to_recent=True))
                         except Exception:
-                            continue
+                            return
         except Exception:
             pass
         await asyncio.sleep(60)
@@ -1121,6 +1123,33 @@ async def register_handlers(client: TelegramClient, label: str):
                 else:
                     await event.edit(await translate_text(m.group(1), m.group(2)))
 
+            elif cmd == "msg":
+                parts = arg.split(maxsplit=1)
+                if not parts:
+                    await event.edit("Usage: .msg <target> <text> OR reply + .msg <target>")
+                    return
+                target = parts[0]
+                text_body = parts[1] if len(parts) > 1 else ""
+                reply = await event.get_reply_message() if event.is_reply else None
+                try:
+                    entity = await client.get_entity(target)
+                    if reply and reply.media:
+                        tmp = MEDIA_DIR / label / "tmp"
+                        tmp.mkdir(parents=True, exist_ok=True)
+                        src = await reply.download_media(file=tmp / "msg_forward")
+                        caption = text_body or (reply.raw_text or "")
+                        await client.send_file(entity, src, caption=caption)
+                    elif reply and (reply.raw_text and not text_body):
+                        await client.send_message(entity, reply.raw_text)
+                    elif text_body:
+                        await client.send_message(entity, text_body)
+                    else:
+                        await event.edit("Nothing to send. Add text or reply to message/media.")
+                        return
+                    await event.edit("Sent ✅")
+                except Exception as exc:
+                    await event.edit(f"Failed to send: {exc}")
+
             elif cmd == "calc":
                 await event.edit(f"Result: `{safe_calc(arg)}`" if arg else "Usage: .calc <expr>")
             elif cmd == "short":
@@ -1246,7 +1275,7 @@ async def start_control_bot() -> asyncio.Task | None:
                     data = res.json()
                     if not data.get("ok"):
                         await asyncio.sleep(2)
-                        continue
+                        return
                     for upd in data.get("result", []):
                         offset = max(offset, upd["update_id"] + 1)
                         msg = upd.get("message") or {}
@@ -1256,38 +1285,38 @@ async def start_control_bot() -> asyncio.Task | None:
                         sender = msg.get("from") or {}
                         sender_id = sender.get("id")
                         if not chat_id or not sender_id:
-                            continue
+                            return
 
                         if owner_id is None:
                             owner_id = sender_id
                             ctrl_file.write_text(json.dumps({"owner_id": owner_id}, indent=2))
                         if sender_id != owner_id:
-                            continue
+                            return
 
                         if text in {"🏠 Menu", "menu", "Menu"}:
                             await send_msg(client, chat_id, "Main menu:", menu=True)
-                            continue
+                            return
 
                         if text == "❌ Cancel":
                             pending_add.pop(chat_id, None)
                             pending_phone.pop(chat_id, None)
                             pending_action.pop(chat_id, None)
                             await send_msg(client, chat_id, "Cancelled.", menu=True)
-                            continue
+                            return
 
                         if text in {"➕ Add Account (Phone)", "/add_account_phone"}:
                             pending_phone[chat_id] = {"step": "label"}
                             pending_add.pop(chat_id, None)
                             pending_action.pop(chat_id, None)
                             await send_msg(client, chat_id, "Phone wizard 1/6: send account label")
-                            continue
+                            return
 
                         if text in {"➕ Add Account (Session)", "/add_account"}:
                             pending_add[chat_id] = {"step": "label"}
                             pending_phone.pop(chat_id, None)
                             pending_action.pop(chat_id, None)
                             await send_msg(client, chat_id, "Session wizard 1/4: send account label")
-                            continue
+                            return
 
                         if text == "📋 List Accounts":
                             labels = store.list_users()
@@ -1299,13 +1328,13 @@ async def start_control_bot() -> asyncio.Task | None:
                                     d = store.load_user(lb)
                                     lines.append(f"{lb} active={d.get('active', True)}")
                                 await send_msg(client, chat_id, "\n".join(lines), menu=True)
-                            continue
+                            return
 
                         if text in {"✅ Enable Account", "⛔ Disable Account", "🗑 Delete Account"}:
                             mode = {"✅ Enable Account": "enable", "⛔ Disable Account": "disable", "🗑 Delete Account": "delete"}[text]
                             pending_action[chat_id] = {"mode": mode}
                             await send_msg(client, chat_id, f"Send label to {mode}:")
-                            continue
+                            return
 
                         if chat_id in pending_action:
                             mode = pending_action[chat_id]["mode"]
@@ -1322,7 +1351,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"Error: {exc}", menu=True)
                             pending_action.pop(chat_id, None)
-                            continue
+                            return
 
                         if text == "/start":
                             await send_msg(
@@ -1334,7 +1363,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 "Use buttons below (preferred).",
                                 menu=True,
                             )
-                            continue
+                            return
 
 
                         if chat_id in pending_add:
@@ -1376,7 +1405,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                     await send_msg(client, chat_id, f"Add failed: {exc}")
                                 pending_add.pop(chat_id, None)
                             pending_phone.pop(chat_id, None)
-                            continue
+                            return
 
 
                         if chat_id in pending_phone:
@@ -1474,7 +1503,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"2FA failed: {exc}")
                                 pending_phone.pop(chat_id, None)
-                            continue
+                            return
 
                 except Exception:
                     await asyncio.sleep(2)

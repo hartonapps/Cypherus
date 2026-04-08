@@ -19,6 +19,7 @@
 - `.vet` : Show all important setting toggles (ON/OFF status).
 - `.logout` : Disable current account from auto-start.
 - `.reset` : Remove local account profile/session.
+- `.msg <target> <text>` or reply + `.msg <target>` : Send text/photo/file to user/group/channel you can message.
 
 ## Automation
 - `.away <text>` : Auto-reply in private chats with your custom AFK text.
