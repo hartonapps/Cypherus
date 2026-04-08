@@ -1371,18 +1371,35 @@ async def start_control_bot() -> asyncio.Task | None:
                                 await send_msg(client, chat_id, "Phone wizard 4/6: send phone number with +countrycode")
                             elif step == "phone":
                                 st["phone"] = text
+                                temp = None
                                 try:
-                                    await send_msg(client, chat_id, "Requesting login code... please wait.")
+                                    try:
+                                        await send_msg(client, chat_id, "Requesting login code... please wait.")
+                                    except Exception:
+                                        pass
                                     temp = TelegramClient(StringSession(), st["api_id"], st["api_hash"])
                                     await temp.connect()
                                     sent = await temp.send_code_request(st["phone"])
                                     st["phone_code_hash"] = sent.phone_code_hash
                                     st["temp"] = temp
                                     st["step"] = "code"
-                                    await send_msg(client, chat_id, "Phone wizard 5/6: send login code you received in Telegram")
+                                    try:
+                                        await send_msg(client, chat_id, "Phone wizard 5/6: send login code you received in Telegram")
+                                    except Exception:
+                                        pass
                                 except Exception as exc:
-                                    await send_msg(client, chat_id, f"Failed sending code: {exc}\nSend phone number again (with +countrycode) or press Cancel.")
-                                    st["step"] = "phone"
+                                    # Sometimes Telegram may still deliver code even if request flow throws.
+                                    if st.get("temp") and st.get("phone_code_hash"):
+                                        st["step"] = "code"
+                                        await send_msg(client, chat_id, f"Code request warning: {exc!r}\nIf you received the code, send it now.")
+                                    else:
+                                        try:
+                                            if temp:
+                                                await temp.disconnect()
+                                        except Exception:
+                                            pass
+                                        st["step"] = "phone"
+                                        await send_msg(client, chat_id, f"Failed sending code: {exc!r}\nSend phone number again (with +countrycode) or press Cancel.")
                             elif step == "code":
                                 temp = st.get("temp")
                                 try:
