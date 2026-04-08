@@ -1198,9 +1198,15 @@ async def start_control_bot() -> asyncio.Task | None:
 
     pending_add: dict[int, dict] = {}
     pending_phone: dict[int, dict] = {}
+    pending_action: dict[int, dict] = {}
 
-    async def send_msg(client: httpx.AsyncClient, chat_id: int, text: str):
-        await client.post(f"{api_base}/sendMessage", json={"chat_id": chat_id, "text": text})
+    MENU_KEYS = [["➕ Add Account (Phone)", "➕ Add Account (Session)"], ["📋 List Accounts", "✅ Enable Account"], ["⛔ Disable Account", "🗑 Delete Account"], ["❌ Cancel", "🏠 Menu"]]
+
+    async def send_msg(client: httpx.AsyncClient, chat_id: int, text: str, menu: bool = False):
+        payload = {"chat_id": chat_id, "text": text}
+        if menu:
+            payload["reply_markup"] = {"keyboard": MENU_KEYS, "resize_keyboard": True, "one_time_keyboard": False}
+        await client.post(f"{api_base}/sendMessage", json=payload)
 
     async def poll_loop():
         nonlocal owner_id
@@ -1208,7 +1214,7 @@ async def start_control_bot() -> asyncio.Task | None:
         async with httpx.AsyncClient(timeout=35) as client:
             while True:
                 try:
-                    res = await client.get(f"{api_base}/getUpdates", params={"timeout": 25, "offset": offset})
+                    res = await client.get(f"{api_base}/getUpdates", params={"timeout": 10, "offset": offset})
                     data = res.json()
                     if not data.get("ok"):
                         await asyncio.sleep(2)
@@ -1230,6 +1236,66 @@ async def start_control_bot() -> asyncio.Task | None:
                         if sender_id != owner_id:
                             continue
 
+                        if text in {"🏠 Menu", "menu", "Menu"}:
+                            await send_msg(client, chat_id, "Main menu:", menu=True)
+                            continue
+
+                        if text == "❌ Cancel":
+                            pending_add.pop(chat_id, None)
+                            pending_phone.pop(chat_id, None)
+                            pending_action.pop(chat_id, None)
+                            await send_msg(client, chat_id, "Cancelled.", menu=True)
+                            continue
+
+                        if text in {"➕ Add Account (Phone)", "/add_account_phone"}:
+                            pending_phone[chat_id] = {"step": "label"}
+                            pending_add.pop(chat_id, None)
+                            pending_action.pop(chat_id, None)
+                            await send_msg(client, chat_id, "Phone wizard 1/6: send account label")
+                            continue
+
+                        if text in {"➕ Add Account (Session)", "/add_account"}:
+                            pending_add[chat_id] = {"step": "label"}
+                            pending_phone.pop(chat_id, None)
+                            pending_action.pop(chat_id, None)
+                            await send_msg(client, chat_id, "Session wizard 1/4: send account label")
+                            continue
+
+                        if text == "📋 List Accounts":
+                            labels = store.list_users()
+                            if not labels:
+                                await send_msg(client, chat_id, "No users.", menu=True)
+                            else:
+                                lines = []
+                                for lb in labels:
+                                    d = store.load_user(lb)
+                                    lines.append(f"{lb} active={d.get('active', True)}")
+                                await send_msg(client, chat_id, "\n".join(lines), menu=True)
+                            continue
+
+                        if text in {"✅ Enable Account", "⛔ Disable Account", "🗑 Delete Account"}:
+                            mode = {"✅ Enable Account": "enable", "⛔ Disable Account": "disable", "🗑 Delete Account": "delete"}[text]
+                            pending_action[chat_id] = {"mode": mode}
+                            await send_msg(client, chat_id, f"Send label to {mode}:")
+                            continue
+
+                        if chat_id in pending_action:
+                            mode = pending_action[chat_id]["mode"]
+                            label = text.strip()
+                            if mode == "delete":
+                                store.delete_user(label)
+                                await send_msg(client, chat_id, f"Deleted {label}", menu=True)
+                            else:
+                                try:
+                                    d = store.load_user(label)
+                                    d["active"] = mode == "enable"
+                                    store.save_user(label, d)
+                                    await send_msg(client, chat_id, f"{label} active={d['active']}", menu=True)
+                                except Exception as exc:
+                                    await send_msg(client, chat_id, f"Error: {exc}", menu=True)
+                            pending_action.pop(chat_id, None)
+                            continue
+
                         if text == "/start":
                             await send_msg(
                                 client,
@@ -1237,28 +1303,11 @@ async def start_control_bot() -> asyncio.Task | None:
                                 "Controller ready.\n"
                                 "/add_account (interactive, with StringSession)\n/add_account_phone (interactive, login by phone)\n"
                                 "/list\n/enable <label>\n/disable <label>\n/delete <label>\n"
-                                "/cancel",
+                                "Use buttons below (preferred).",
+                                menu=True,
                             )
                             continue
 
-                        if text == "/cancel":
-                            pending_add.pop(chat_id, None)
-                            pending_phone.pop(chat_id, None)
-                            await send_msg(client, chat_id, "Cancelled.")
-                            continue
-
-                        if text == "/add_account":
-                            pending_add[chat_id] = {"step": "label"}
-                            pending_phone.pop(chat_id, None)
-                            await send_msg(client, chat_id, "Step 1/4: send account label (example: main1)")
-                            continue
-
-                        if text == "/add_account_phone":
-                            pending_phone[chat_id] = {"step": "label"}
-                            pending_add.pop(chat_id, None)
-                            pending_phone.pop(chat_id, None)
-                            await send_msg(client, chat_id, "Phone wizard 1/6: send account label")
-                            continue
 
                         if chat_id in pending_add:
                             st = pending_add[chat_id]
@@ -1294,7 +1343,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                             "settings": {},
                                         },
                                     )
-                                    await send_msg(client, chat_id, f"Added account: {st['label']}. Restart bot to activate.")
+                                    await send_msg(client, chat_id, f"Added account: {st['label']}. Restart bot to activate.", menu=True)
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"Add failed: {exc}")
                                 pending_add.pop(chat_id, None)
@@ -1349,7 +1398,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                         "active": True,
                                         "settings": {},
                                     })
-                                    await send_msg(client, chat_id, f"Added account by phone: {st['label']} (restart to activate)")
+                                    await send_msg(client, chat_id, f"Added account by phone: {st['label']} (restart to activate)", menu=True)
                                     await temp.disconnect()
                                     pending_phone.pop(chat_id, None)
                                 except errors.SessionPasswordNeededError:
@@ -1378,40 +1427,13 @@ async def start_control_bot() -> asyncio.Task | None:
                                         "active": True,
                                         "settings": {},
                                     })
-                                    await send_msg(client, chat_id, f"Added account by phone+2FA: {st['label']} (restart to activate)")
+                                    await send_msg(client, chat_id, f"Added account by phone+2FA: {st['label']} (restart to activate)", menu=True)
                                     await temp.disconnect()
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"2FA failed: {exc}")
                                 pending_phone.pop(chat_id, None)
                             continue
 
-                        if text == "/list":
-                            labels = store.list_users()
-                            if not labels:
-                                await send_msg(client, chat_id, "No users.")
-                            else:
-                                lines = []
-                                for lb in labels:
-                                    d = store.load_user(lb)
-                                    lines.append(f"{lb} active={d.get('active', True)}")
-                                await send_msg(client, chat_id, "\n".join(lines))
-                            continue
-
-                        if text.startswith("/enable ") or text.startswith("/disable ") or text.startswith("/delete "):
-                            cmd, label = text[1:].split(maxsplit=1)
-                            label = label.strip()
-                            if cmd == "delete":
-                                store.delete_user(label)
-                                await send_msg(client, chat_id, f"Deleted {label}")
-                            else:
-                                try:
-                                    d = store.load_user(label)
-                                    d["active"] = cmd == "enable"
-                                    store.save_user(label, d)
-                                    await send_msg(client, chat_id, f"{label} active={d['active']}")
-                                except Exception as exc:
-                                    await send_msg(client, chat_id, f"Error: {exc}")
-                            continue
                 except Exception:
                     await asyncio.sleep(2)
 

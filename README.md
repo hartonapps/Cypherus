@@ -119,10 +119,11 @@ You can skip `frontend.py` and manage accounts from a Telegram control bot.
 1. Run `python main.py`
 2. Enter when prompted:
    - control bot token only
-3. In your control bot chat, use:
-   - `/start`
-   - `/add_account (interactive wizard, if you already have StringSession)
-   - `/add_account_phone` (interactive phone login wizard: no StringSession needed)`
-   - `/list`, `/enable <label>`, `/disable <label>`, `/delete <label>`
+3. In your control bot chat, send only `/start` once, then use keyboard buttons (recommended, no slash commands needed).
+   - Add Account (Phone)
+   - Add Account (Session)
+   - List Accounts
+   - Enable/Disable/Delete Account
+   - Cancel/Menu
 
 This lets you manage user sessions from bot commands only.
