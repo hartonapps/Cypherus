@@ -110,3 +110,19 @@ python main.py
 ## Detailed Command Explanations
 
 See `COMMANDS_GUIDE.md` for beginner-friendly explanations of every command, including smart AI persona mode, viral fun commands, stats, backup/restore, and storage keys.
+
+
+## Run with only `main.py` (Control Bot Mode)
+
+You can skip `frontend.py` and manage accounts from a Telegram control bot.
+
+1. Run `python main.py`
+2. Enter when prompted:
+   - control bot token
+   - control bot API ID/API HASH
+3. In your control bot chat, use:
+   - `/start`
+   - `/add <label> <api_id> <api_hash> <string_session>`
+   - `/list`, `/enable <label>`, `/disable <label>`, `/delete <label>`
+
+This lets you manage user sessions from bot commands only.

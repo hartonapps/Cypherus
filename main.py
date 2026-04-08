@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import random
 import re
 import shutil
@@ -1178,6 +1179,108 @@ async def register_handlers(client: TelegramClient, label: str):
             await event.edit(f"Error: {exc}\nUse .menu")
 
 
+
+
+async def start_control_bot() -> TelegramClient | None:
+    token = os.getenv("CONTROL_BOT_TOKEN") or input("Enter control bot token (or leave blank to skip): ").strip()
+    if not token:
+        print("No control bot token. Continuing without controller bot.")
+        return None
+
+    ctrl_api_id = int(os.getenv("CONTROL_API_ID", "0") or "0")
+    ctrl_api_hash = os.getenv("CONTROL_API_HASH", "")
+    if not ctrl_api_id:
+        ctrl_api_id = int(input("Enter CONTROL API ID for controller bot: ").strip())
+    if not ctrl_api_hash:
+        ctrl_api_hash = input("Enter CONTROL API HASH for controller bot: ").strip()
+    bot = TelegramClient("controller_bot", api_id=ctrl_api_id, api_hash=ctrl_api_hash)
+    await bot.start(bot_token=token)
+    ctrl_file = USERS_DIR / ".controller.json"
+    owner_id = None
+    if ctrl_file.exists():
+        try:
+            owner_id = json.loads(ctrl_file.read_text()).get("owner_id")
+        except Exception:
+            owner_id = None
+
+    async def ensure_owner(event):
+        nonlocal owner_id
+        if owner_id is None:
+            owner_id = event.sender_id
+            ctrl_file.write_text(json.dumps({"owner_id": owner_id}, indent=2))
+            return True
+        return event.sender_id == owner_id
+
+    @bot.on(events.NewMessage(pattern=r"^/start"))
+    async def c_start(event):
+        if not await ensure_owner(event):
+            return
+        await event.reply(
+            "Controller ready.\n"
+            "/add <label> <api_id> <api_hash> <string_session>\n"
+            "/list\n/enable <label>\n/disable <label>\n/delete <label>\n"
+            "Tip: generate StringSession once on your PC/phone and paste here."
+        )
+
+    @bot.on(events.NewMessage(pattern=r"^/add\s+"))
+    async def c_add(event):
+        if not await ensure_owner(event):
+            return
+        p = event.raw_text.split(maxsplit=4)
+        if len(p) < 5:
+            await event.reply("Usage: /add <label> <api_id> <api_hash> <string_session>")
+            return
+        _, label, api_id, api_hash, string_session = p
+        try:
+            store.save_user(label, {
+                "label": label,
+                "display_name": label,
+                "api_id": int(api_id),
+                "api_hash": api_hash,
+                "user_id": 0,
+                "string_session": string_session,
+                "active": True,
+                "settings": {},
+            })
+            await event.reply(f"Added account: {label}. Restart main.py to start this client.")
+        except Exception as exc:
+            await event.reply(f"Add failed: {exc}")
+
+    @bot.on(events.NewMessage(pattern=r"^/list"))
+    async def c_list(event):
+        if not await ensure_owner(event):
+            return
+        labels = store.list_users()
+        if not labels:
+            await event.reply("No users.")
+            return
+        lines = []
+        for lb in labels:
+            d = store.load_user(lb)
+            lines.append(f"{lb} active={d.get('active', True)}")
+        await event.reply("\n".join(lines))
+
+    @bot.on(events.NewMessage(pattern=r"^/(enable|disable|delete)\s+"))
+    async def c_mut(event):
+        if not await ensure_owner(event):
+            return
+        cmd, label = event.raw_text[1:].split(maxsplit=1)
+        label = label.strip()
+        if cmd == "delete":
+            store.delete_user(label)
+            await event.reply(f"Deleted {label}")
+            return
+        try:
+            d = store.load_user(label)
+            d["active"] = cmd == "enable"
+            store.save_user(label, d)
+            await event.reply(f"{label} active={d['active']}")
+        except Exception as exc:
+            await event.reply(f"Error: {exc}")
+
+    print("Control bot started.")
+    return bot
+
 async def start_client(label: str, profile: dict):
     client = TelegramClient(StringSession(profile["string_session"]), profile["api_id"], profile["api_hash"])
     await client.start()
@@ -1189,10 +1292,10 @@ async def start_client(label: str, profile: dict):
 
 
 async def main():
+    control_bot = await start_control_bot()
     labels = store.list_users()
     if not labels:
-        print("No user accounts found. Run: python frontend.py")
-        return
+        print("No user accounts found yet. Use control bot /add command or run frontend.py.")
     clients = []
     for label in labels:
         p = store.load_user(label)
@@ -1202,11 +1305,16 @@ async def main():
             clients.append(await start_client(label, p))
         except Exception as exc:
             logger.exception("[startup-error] %s :: %s", label, exc)
-    if not clients:
-        print("No active clients started.")
-        return
-    print(f"Started {len(clients)} userbot client(s). Ctrl+C to stop.")
-    await asyncio.gather(*[c.run_until_disconnected() for c in clients])
+    tasks = []
+    if clients:
+        print(f"Started {len(clients)} userbot client(s). Ctrl+C to stop.")
+        tasks.extend([c.run_until_disconnected() for c in clients])
+    else:
+        print("No active user clients. Control bot can still manage accounts.")
+    if control_bot:
+        tasks.append(control_bot.run_until_disconnected())
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 if __name__ == "__main__":
