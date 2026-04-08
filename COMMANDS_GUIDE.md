@@ -78,3 +78,14 @@
 - `.join <invite_link>` : Join via invite.
 - Reply message + `.pin` : Pin it.
 - `.unpin` : Unpin current pinned message.
+
+
+## Extra Aliases / New Commands Added
+- `.generate`, `.code`, `.teach`
+- `.tiktok`, `.instagram`, `.twitter`, `.video`
+- `.link`, `.setwelcome`, `.setgoodbye`
+- `.setprefix`, `.setbotname`, `.setownername`
+- `.autoread`, `.autotype`, `.alwaysonline`
+- `.qrcode`, `.tinyurl`, `.sticker`, `.toimage`, `.tourl`, `.genpass`
+- `.lyrics`, `.define`, `.weather`
+- `.jokes`, `.memes`, `.quotes`

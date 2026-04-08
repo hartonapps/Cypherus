@@ -134,6 +134,34 @@ COMMAND_HELP = {
     "dare": "Usage: .dare\nDare prompt.",
     "backup": "Usage: .backup\nCreate local profile backup.",
     "restore": "Usage: .restore\nRestore local profile backup.",
+    "generate": "Usage: .generate <prompt>\nGenerate stories/captions/scripts.",
+    "code": "Usage: .code <task>\nGenerate or fix code.",
+    "teach": "Usage: .teach <topic>\nExplain step-by-step.",
+    "tiktok": "Usage: .tiktok <url>\nDownload TikTok video.",
+    "instagram": "Usage: .instagram <url>\nDownload Instagram video/reel.",
+    "twitter": "Usage: .twitter <url>\nDownload Twitter/X video.",
+    "video": "Usage: .video <url>\nDownload supported video URL.",
+    "link": "Usage: .link\nGet group invite link.",
+    "setwelcome": "Usage: .setwelcome <text>\nSet group welcome message.",
+    "setgoodbye": "Usage: .setgoodbye <text>\nSet group goodbye message.",
+    "setprefix": "Usage: .setprefix <symbol>\nSet command prefix.",
+    "setbotname": "Usage: .setbotname <name>\nSet bot display name setting.",
+    "setownername": "Usage: .setownername <name>\nSet owner name setting.",
+    "autoread": "Usage: .autoread on|off\nAuto mark chats as read.",
+    "autotype": "Usage: .autotype on|off\nSend typing action.",
+    "alwaysonline": "Usage: .alwaysonline on|off\nAttempt always-online status.",
+    "qrcode": "Usage: .qrcode <text>\nGenerate QR code.",
+    "tinyurl": "Usage: .tinyurl <url>\nShorten URL.",
+    "sticker": "Usage: reply image + .sticker\nConvert image to sticker.",
+    "toimage": "Usage: reply sticker + .toimage\nConvert sticker to image.",
+    "tourl": "Usage: reply file + .tourl\nUpload file and get public link.",
+    "genpass": "Usage: .genpass\nGenerate random strong password.",
+    "lyrics": "Usage: .lyrics artist - song\nFetch song lyrics.",
+    "define": "Usage: .define <word>\nDictionary meaning.",
+    "weather": "Usage: .weather <city>\nCurrent weather.",
+    "jokes": "Usage: .jokes\nRandom joke.",
+    "memes": "Usage: .memes\nRandom meme image.",
+    "quotes": "Usage: .quotes\nMotivational quote.",
 }
 
 
@@ -248,6 +276,14 @@ def ensure_settings(data: dict):
     s.setdefault("stats", {"messages_seen": 0, "messages_sent": 0, "commands": 0, "chat_hits": {}})
     s.setdefault("saved_items", {})
     s.setdefault("xp", {"points": 0, "daily_last": ""})
+    s.setdefault("prefix", ".")
+    s.setdefault("botname", "Cypherus")
+    s.setdefault("ownername", "Owner")
+    s.setdefault("autoread", False)
+    s.setdefault("autotype", False)
+    s.setdefault("alwaysonline", False)
+    s.setdefault("welcome", {})
+    s.setdefault("goodbye", {})
 
 
 async def run_scheduled_send(client: TelegramClient, chat_id: int, delay: int, text: str):
@@ -282,6 +318,42 @@ def add_xp(data: dict, amount: int = 1):
     ensure_settings(data)
     data["settings"]["xp"]["points"] = int(data["settings"]["xp"].get("points", 0)) + amount
 
+
+
+async def fetch_text_search(kind: str, query: str) -> str:
+    try:
+        async with httpx.AsyncClient(timeout=25) as c:
+            if kind == "lyrics":
+                parts = query.split("-", 1)
+                if len(parts) < 2:
+                    return "Use: .lyrics artist - title"
+                r = await c.get(f"https://api.lyrics.ovh/v1/{parts[0].strip()}/{parts[1].strip()}")
+                if r.is_success:
+                    return (r.json().get("lyrics") or "No lyrics found")[:3900]
+            elif kind == "define":
+                r = await c.get(f"https://api.dictionaryapi.dev/api/v2/entries/en/{query.strip()}")
+                if r.is_success:
+                    d = r.json()[0]
+                    m = d.get("meanings", [{}])[0].get("definitions", [{}])[0].get("definition", "No definition")
+                    return f"{query}: {m}"
+            elif kind == "weather":
+                r = await c.get(f"https://wttr.in/{query}?format=j1")
+                if r.is_success:
+                    d = r.json().get("current_condition", [{}])[0]
+                    return f"{query}: {d.get('temp_C')}°C, {d.get('weatherDesc',[{'value':''}])[0]['value']}"
+    except Exception:
+        pass
+    return f"{kind} unavailable"
+
+
+def get_user_prefix(label: str) -> str:
+    try:
+        d = store.load_user(label)
+        ensure_settings(d)
+        return d["settings"].get("prefix", ".") or "."
+    except Exception:
+        return "."
+
 async def register_handlers(client: TelegramClient, label: str):
     anti_spam_map: dict[int, deque[float]] = defaultdict(deque)
     msg_cache: dict[tuple[int, int], dict] = {}
@@ -292,6 +364,15 @@ async def register_handlers(client: TelegramClient, label: str):
         data = store.load_user(label)
         ensure_settings(data)
         settings = data["settings"]
+        if settings.get("autoread", False):
+            await client.send_read_acknowledge(event.chat_id, msg)
+        if settings.get("autotype", False) and event.is_private:
+            await client(functions.messages.SetTypingRequest(peer=event.chat_id, action=types.SendMessageTypingAction()))
+        if settings.get("alwaysonline", False):
+            try:
+                await client(functions.account.UpdateStatusRequest(offline=False))
+            except Exception:
+                pass
         settings["stats"]["messages_seen"] = int(settings["stats"].get("messages_seen", 0)) + 1
         chat_hits = settings["stats"].setdefault("chat_hits", {})
         chat_hits[str(event.chat_id)] = int(chat_hits.get(str(event.chat_id), 0)) + 1
@@ -365,6 +446,20 @@ async def register_handlers(client: TelegramClient, label: str):
 
         store.save_user(label, data)
 
+    
+    @client.on(events.ChatAction)
+    async def on_chat_action(event):
+        data = store.load_user(label)
+        ensure_settings(data)
+        chat_key = str(event.chat_id)
+        if event.user_joined or event.user_added:
+            text = data["settings"].get("welcome", {}).get(chat_key)
+            if text:
+                await event.reply(text)
+        if event.user_left or event.user_kicked:
+            text = data["settings"].get("goodbye", {}).get(chat_key)
+            if text:
+                await event.reply(text)
     @client.on(events.MessageDeleted())
     async def on_deleted(event):
         data = store.load_user(label)
@@ -415,9 +510,12 @@ async def register_handlers(client: TelegramClient, label: str):
         except Exception:
             pass
 
-    @client.on(events.NewMessage(outgoing=True, pattern=r"^\."))
+    @client.on(events.NewMessage(outgoing=True))
     async def command_handler(event):
-        cmd, arg = parse_command(event.raw_text)
+        prefix = get_user_prefix(label)
+        if not (event.raw_text or "").startswith(prefix):
+            return
+        cmd, arg = parse_command((event.raw_text or "").replace(prefix, ".", 1))
         if not cmd:
             return
         try:
@@ -462,6 +560,149 @@ async def register_handlers(client: TelegramClient, label: str):
                         d["settings"]["persona"] = mode
                     await update_user_settings(label, m)
                     await event.edit(f"Persona set: {mode}")
+
+            elif cmd in {"generate", "code", "teach"}:
+                if not arg.strip():
+                    await event.edit(f"Usage: .{cmd} <prompt>")
+                else:
+                    prompt = {
+                        "generate": f"Generate creative content for: {arg}",
+                        "code": f"Write/fix code for: {arg}",
+                        "teach": f"Teach step-by-step: {arg}",
+                    }[cmd]
+                    d = store.load_user(label); ensure_settings(d)
+                    out = await ask_free_ai(prompt, d["settings"].get("persona", "default"), [])
+                    await event.edit(out[:3900])
+
+            elif cmd in {"tiktok", "instagram", "twitter", "video"}:
+                if not arg:
+                    await event.edit(f"Usage: .{cmd} <url>")
+                else:
+                    await event.edit("Downloading...")
+                    path = await asyncio.to_thread(download_media, arg, MEDIA_DIR / label / "downloads")
+                    await client.send_file(event.chat_id, path)
+                    await event.delete()
+
+            elif cmd == "link":
+                if not event.is_group:
+                    await event.edit("Group only")
+                else:
+                    full = await client(functions.messages.ExportChatInviteRequest(event.chat_id))
+                    await event.edit(getattr(full, "link", "Cannot get link"))
+
+            elif cmd == "setwelcome":
+                if not event.is_group or not arg.strip():
+                    await event.edit("Usage: .setwelcome <text> (in group)")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"].setdefault("welcome", {})[str(event.chat_id)] = arg.strip()
+                    await update_user_settings(label, m)
+                    await event.edit("Welcome message set.")
+
+            elif cmd == "setgoodbye":
+                if not event.is_group or not arg.strip():
+                    await event.edit("Usage: .setgoodbye <text> (in group)")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"].setdefault("goodbye", {})[str(event.chat_id)] = arg.strip()
+                    await update_user_settings(label, m)
+                    await event.edit("Goodbye message set.")
+
+            elif cmd in {"setprefix", "setbotname", "setownername"}:
+                if not arg.strip():
+                    await event.edit(f"Usage: .{cmd} <value>")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        if cmd == "setprefix":
+                            d["settings"]["prefix"] = arg.strip()[0]
+                        elif cmd == "setbotname":
+                            d["settings"]["botname"] = arg.strip()
+                        else:
+                            d["settings"]["ownername"] = arg.strip()
+                    await update_user_settings(label, m)
+                    await event.edit(f"{cmd} updated.")
+
+            elif cmd in {"autoread", "autotype", "alwaysonline"}:
+                st = arg.strip().lower()
+                if st not in {"on", "off"}:
+                    await event.edit(f"Usage: .{cmd} on|off")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"][cmd] = st == "on"
+                    await update_user_settings(label, m)
+                    await event.edit(f"{cmd} {st}")
+
+            elif cmd in {"qrcode", "tinyurl", "sticker", "toimage"}:
+                alias = {"qrcode": "qr", "tinyurl": "short", "sticker": "s", "toimage": "toimg"}[cmd]
+                cmd = alias
+                # fall through via manual dispatch
+                if cmd == "qr":
+                    if not arg:
+                        await event.edit("Usage: .qrcode <text>")
+                    else:
+                        await client.send_file(event.chat_id, await build_qr_png_bytes(arg), caption="QR")
+                        await event.delete()
+                elif cmd == "short":
+                    await event.edit(await shorten_url(arg) if arg else "Usage: .tinyurl <url>")
+                elif cmd == "s":
+                    reply = await event.get_reply_message()
+                    if not reply or not reply.media:
+                        await event.edit("Reply image + .sticker")
+                    else:
+                        tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                        src = Path(await reply.download_media(file=tmp / "src"))
+                        out = image_to_sticker(src, tmp / "sticker.webp")
+                        await client.send_file(event.chat_id, out); await event.delete()
+                else:
+                    reply = await event.get_reply_message()
+                    if not reply or not reply.media:
+                        await event.edit("Reply sticker + .toimage")
+                    else:
+                        tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                        src = Path(await reply.download_media(file=tmp / "sti"))
+                        out = sticker_to_image(src, tmp / "sti.png")
+                        await client.send_file(event.chat_id, out); await event.delete()
+
+            elif cmd == "tourl":
+                reply = await event.get_reply_message()
+                if not reply or not reply.media:
+                    await event.edit("Usage: reply file + .tourl")
+                else:
+                    tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                    src = Path(await reply.download_media(file=tmp / "upload_file"))
+                    async with httpx.AsyncClient(timeout=40) as c:
+                        files = {"file": (src.name, src.read_bytes())}
+                        r = await c.post("https://0x0.st", files=files)
+                        await event.edit(r.text.strip() if r.is_success else "Upload failed")
+
+            elif cmd == "genpass":
+                import secrets, string
+                chars = string.ascii_letters + string.digits + "!@#$%^&*"
+                pwd = "".join(secrets.choice(chars) for _ in range(16))
+                await event.edit(f"Generated password: `{pwd}`")
+
+            elif cmd in {"lyrics", "define", "weather"}:
+                if not arg:
+                    await event.edit(f"Usage: .{cmd} <query>")
+                else:
+                    await event.edit((await fetch_text_search(cmd, arg))[:3900])
+
+            elif cmd in {"jokes", "quotes", "memes"}:
+                if cmd == "memes":
+                    async with httpx.AsyncClient(timeout=20) as c:
+                        r = await c.get("https://meme-api.com/gimme")
+                        if r.is_success:
+                            d = r.json()
+                            await client.send_file(event.chat_id, d.get("url"), caption=d.get("title", "meme"))
+                            await event.delete()
+                        else:
+                            await event.edit("Meme unavailable")
+                else:
+                    await event.edit(await fetch_fun_text("joke" if cmd == "jokes" else "quote"))
 
             elif cmd == "roast":
                 target = arg.strip() or "you"
