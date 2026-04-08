@@ -84,12 +84,19 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.pin` / `.unpin`
 
 **Smart / Viral / Utility+**
-• `.persona calm|savage|default`
+• `.persona calm|savage|default` `.generate` `.code` `.teach`
 • `.roast @user` `.ship @u1 @u2` `.rate @user` `.vibecheck` `.truth` `.dare`
 • `.lockchat on|off` `.blockword <word>` `.stats` `.activity @user` `.usage`
-• `.joke` `.quote` `.facts` `.backup` `.restore`
-• `.save <name>` (reply) `.get <name>` `.list`
-• `.daily` `.rank`
+• `.backup` `.restore` `.save <name>` (reply) `.get <name>` `.list`
+• `.daily` `.rank` `.genpass`
+
+**Extra Aliases / Search / Settings**
+• `.tiktok` `.instagram` `.twitter` `.video` `.song`
+• `.qrcode` `.tinyurl` `.sticker` `.toimage` `.tourl`
+• `.lyrics` `.define` `.weather` `.jokes` `.memes` `.quotes`
+• `.setprefix` `.setbotname` `.setownername`
+• `.autoread on|off` `.autotype on|off` `.alwaysonline on|off`
+• `.setwelcome <text>` `.setgoodbye <text>` `.link`
 """
 
 
