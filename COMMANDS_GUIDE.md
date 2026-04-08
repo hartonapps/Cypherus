@@ -89,3 +89,6 @@
 - `.qrcode`, `.tinyurl`, `.sticker`, `.toimage`, `.tourl`, `.genpass`
 - `.lyrics`, `.define`, `.weather`
 - `.jokes`, `.memes`, `.quotes`
+
+- `.autostoryview on|off` : Auto-view stories quickly.
+- `.autostoryreact on|off` : Auto-react to viewed stories (best effort).

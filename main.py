@@ -97,6 +97,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.setprefix` `.setbotname` `.setownername`
 • `.autoread on|off` `.autotype on|off` `.alwaysonline on|off`
 • `.setwelcome <text>` `.setgoodbye <text>` `.link`
+• `.autostoryview on|off` `.autostoryreact on|off`
 """
 
 
@@ -169,6 +170,8 @@ COMMAND_HELP = {
     "jokes": "Usage: .jokes\nRandom joke.",
     "memes": "Usage: .memes\nRandom meme image.",
     "quotes": "Usage: .quotes\nMotivational quote.",
+    "autostoryview": "Usage: .autostoryview on|off\nAuto-view new stories.",
+    "autostoryreact": "Usage: .autostoryreact on|off\nAuto-react to viewed stories.",
 }
 
 
@@ -291,6 +294,8 @@ def ensure_settings(data: dict):
     s.setdefault("alwaysonline", False)
     s.setdefault("welcome", {})
     s.setdefault("goodbye", {})
+    s.setdefault("autostory_view", False)
+    s.setdefault("autostory_react", False)
 
 
 async def run_scheduled_send(client: TelegramClient, chat_id: int, delay: int, text: str):
@@ -360,6 +365,41 @@ def get_user_prefix(label: str) -> str:
         return d["settings"].get("prefix", ".") or "."
     except Exception:
         return "."
+
+
+
+async def story_auto_worker(client: TelegramClient, label: str):
+    while True:
+        try:
+            data = store.load_user(label)
+            ensure_settings(data)
+            st = data["settings"]
+            if st.get("autostory_view", False):
+                stories_api = getattr(functions, "stories", None)
+                if stories_api:
+                    async for dlg in client.iter_dialogs():
+                        if not dlg.is_user:
+                            continue
+                        try:
+                            req = stories_api.ReadStoriesRequest(peer=dlg.entity, max_id=2_147_483_647)
+                            await client(req)
+                            if st.get("autostory_react", False):
+                                # best-effort reaction endpoint; ignore if unavailable
+                                send_react = getattr(stories_api, "SendReactionRequest", None)
+                                get_peer = getattr(stories_api, "GetPeerStoriesRequest", None)
+                                if send_react and get_peer:
+                                    peer_stories = await client(get_peer(peer=dlg.entity))
+                                    stories_obj = getattr(peer_stories, "stories", None)
+                                    if stories_obj and getattr(stories_obj, "stories", None):
+                                        for st_item in stories_obj.stories[:3]:
+                                            sid = getattr(st_item, "id", None)
+                                            if sid:
+                                                await client(send_react(peer=dlg.entity, story_id=sid, reaction=types.ReactionEmoji(emoticon="❤️"), add_to_recent=True))
+                        except Exception:
+                            continue
+        except Exception:
+            pass
+        await asyncio.sleep(60)
 
 async def register_handlers(client: TelegramClient, label: str):
     anti_spam_map: dict[int, deque[float]] = defaultdict(deque)
@@ -866,12 +906,16 @@ async def register_handlers(client: TelegramClient, label: str):
                     await update_user_settings(label, m)
                     await event.edit(f"Filter set for: {word}")
 
-            elif cmd in {"ghostmode", "anti-delete", "anti-edit", "hideonline", "vvwatch", "antispam"}:
+            elif cmd in {"ghostmode", "anti-delete", "anti-edit", "hideonline", "vvwatch", "antispam", "autostoryview", "autostoryreact"}:
                 state = arg.strip().lower()
                 if state not in {"on", "off"}:
                     await event.edit(f"Usage: .{cmd} on|off")
                     return
                 key = cmd.replace("-", "_")
+                if key == "autostoryview":
+                    key = "autostory_view"
+                if key == "autostoryreact":
+                    key = "autostory_react"
                 def m(d):
                     ensure_settings(d)
                     if key == "antispam":
@@ -1140,6 +1184,7 @@ async def start_client(label: str, profile: dict):
     me = await client.get_me()
     logger.info("[online] %s as %s (%s)", label, me.first_name, me.id)
     await register_handlers(client, label)
+    asyncio.create_task(story_auto_worker(client, label))
     return client
 
 
