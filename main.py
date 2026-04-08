@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 
 import httpx
-from telethon import TelegramClient, events, functions, types
+from telethon import TelegramClient, events, functions, types, errors
 from telethon.sessions import StringSession
 
 from config import (
@@ -1197,6 +1197,7 @@ async def start_control_bot() -> asyncio.Task | None:
             owner_id = None
 
     pending_add: dict[int, dict] = {}
+    pending_phone: dict[int, dict] = {}
 
     async def send_msg(client: httpx.AsyncClient, chat_id: int, text: str):
         await client.post(f"{api_base}/sendMessage", json={"chat_id": chat_id, "text": text})
@@ -1234,7 +1235,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 client,
                                 chat_id,
                                 "Controller ready.\n"
-                                "/add_account (interactive)\n"
+                                "/add_account (interactive, with StringSession)\n/add_account_phone (interactive, login by phone)\n"
                                 "/list\n/enable <label>\n/disable <label>\n/delete <label>\n"
                                 "/cancel",
                             )
@@ -1242,12 +1243,21 @@ async def start_control_bot() -> asyncio.Task | None:
 
                         if text == "/cancel":
                             pending_add.pop(chat_id, None)
+                            pending_phone.pop(chat_id, None)
                             await send_msg(client, chat_id, "Cancelled.")
                             continue
 
                         if text == "/add_account":
                             pending_add[chat_id] = {"step": "label"}
+                            pending_phone.pop(chat_id, None)
                             await send_msg(client, chat_id, "Step 1/4: send account label (example: main1)")
+                            continue
+
+                        if text == "/add_account_phone":
+                            pending_phone[chat_id] = {"step": "label"}
+                            pending_add.pop(chat_id, None)
+                            pending_phone.pop(chat_id, None)
+                            await send_msg(client, chat_id, "Phone wizard 1/6: send account label")
                             continue
 
                         if chat_id in pending_add:
@@ -1288,6 +1298,91 @@ async def start_control_bot() -> asyncio.Task | None:
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"Add failed: {exc}")
                                 pending_add.pop(chat_id, None)
+                            pending_phone.pop(chat_id, None)
+                            continue
+
+
+                        if chat_id in pending_phone:
+                            st = pending_phone[chat_id]
+                            step = st.get("step")
+                            if step == "label":
+                                st["label"] = text
+                                st["step"] = "api_id"
+                                await send_msg(client, chat_id, "Phone wizard 2/6: send api_id")
+                            elif step == "api_id":
+                                try:
+                                    st["api_id"] = int(text)
+                                    st["step"] = "api_hash"
+                                    await send_msg(client, chat_id, "Phone wizard 3/6: send api_hash")
+                                except ValueError:
+                                    await send_msg(client, chat_id, "api_id must be integer")
+                            elif step == "api_hash":
+                                st["api_hash"] = text
+                                st["step"] = "phone"
+                                await send_msg(client, chat_id, "Phone wizard 4/6: send phone number with +countrycode")
+                            elif step == "phone":
+                                st["phone"] = text
+                                try:
+                                    temp = TelegramClient(StringSession(), st["api_id"], st["api_hash"])
+                                    await temp.connect()
+                                    sent = await temp.send_code_request(st["phone"])
+                                    st["phone_code_hash"] = sent.phone_code_hash
+                                    st["temp"] = temp
+                                    st["step"] = "code"
+                                    await send_msg(client, chat_id, "Phone wizard 5/6: send login code you received in Telegram")
+                                except Exception as exc:
+                                    await send_msg(client, chat_id, f"Failed sending code: {exc}")
+                                    pending_phone.pop(chat_id, None)
+                            elif step == "code":
+                                temp = st.get("temp")
+                                try:
+                                    await temp.sign_in(phone=st["phone"], code=text, phone_code_hash=st["phone_code_hash"])
+                                    me = await temp.get_me()
+                                    string_session = temp.session.save()
+                                    store.save_user(st["label"], {
+                                        "label": st["label"],
+                                        "display_name": (me.first_name or st["label"]),
+                                        "api_id": st["api_id"],
+                                        "api_hash": st["api_hash"],
+                                        "user_id": me.id,
+                                        "string_session": string_session,
+                                        "active": True,
+                                        "settings": {},
+                                    })
+                                    await send_msg(client, chat_id, f"Added account by phone: {st['label']} (restart to activate)")
+                                    await temp.disconnect()
+                                    pending_phone.pop(chat_id, None)
+                                except errors.SessionPasswordNeededError:
+                                    st["step"] = "password"
+                                    await send_msg(client, chat_id, "Phone wizard 6/6: send 2FA password")
+                                except Exception as exc:
+                                    await send_msg(client, chat_id, f"Login failed: {exc}")
+                                    try:
+                                        await temp.disconnect()
+                                    except Exception:
+                                        pass
+                                    pending_phone.pop(chat_id, None)
+                            elif step == "password":
+                                temp = st.get("temp")
+                                try:
+                                    await temp.sign_in(password=text)
+                                    me = await temp.get_me()
+                                    string_session = temp.session.save()
+                                    store.save_user(st["label"], {
+                                        "label": st["label"],
+                                        "display_name": (me.first_name or st["label"]),
+                                        "api_id": st["api_id"],
+                                        "api_hash": st["api_hash"],
+                                        "user_id": me.id,
+                                        "string_session": string_session,
+                                        "active": True,
+                                        "settings": {},
+                                    })
+                                    await send_msg(client, chat_id, f"Added account by phone+2FA: {st['label']} (restart to activate)")
+                                    await temp.disconnect()
+                                except Exception as exc:
+                                    await send_msg(client, chat_id, f"2FA failed: {exc}")
+                                pending_phone.pop(chat_id, None)
                             continue
 
                         if text == "/list":
