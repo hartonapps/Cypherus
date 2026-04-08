@@ -78,6 +78,9 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.short <url>`
 • `.calc <expression>`
 • `.msg <username/group> <text>` or reply + `.msg <target>`
+• `.decodeid <id>` or reply log + `.decodeid`
+• `.iscypherus <@user/id>`
+• `.search <text>`
 
 **Group Admin**
 • `.tagall`
@@ -124,6 +127,9 @@ COMMAND_HELP = {
     "summarize": "Usage: .summarize <text> or reply + .summarize\nSummarize text.",
     "translate": "Usage: .translate <text> to <lang>\nTranslate text.",
     "msg": "Usage: .msg <target> <text> OR reply + .msg <target>\nSend message/media to user/group.",
+    "decodeid": "Usage: .decodeid <id> OR reply + .decodeid\nResolve ID to username/title/type.",
+    "iscypherus": "Usage: .iscypherus <@user/id>\nCheck whether user is linked in local Cypherus accounts.",
+    "search": "Usage: .search <text>\nSearch and preview media results.",
     "dl": "Usage: .dl <url>\nDownload media from URL.",
     "playlist": "Usage: .playlist <url>\nDownload playlist.",
     "song": "Usage: .song <query>\nSearch and download first song result.",
@@ -1046,7 +1052,7 @@ async def register_handlers(client: TelegramClient, label: str):
                 outdir.mkdir(parents=True, exist_ok=True)
                 await event.edit("Searching and downloading song...")
                 def _song():
-                    with yt_dlp.YoutubeDL({"format": "bestaudio", "outtmpl": str(outdir / "%(title).70s.%(ext)s")}) as y:
+                    with yt_dlp.YoutubeDL({"format": "bestaudio/best", "outtmpl": str(outdir / "%(title).70s.%(ext)s"), "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}], "noplaylist": True}) as y:
                         y.download([f"ytsearch1:{arg}"])
                 await asyncio.to_thread(_song)
                 latest = max(outdir.glob("*"), key=lambda p: p.stat().st_mtime)
@@ -1122,6 +1128,63 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit("Usage: .translate <text> to <lang>")
                 else:
                     await event.edit(await translate_text(m.group(1), m.group(2)))
+
+            elif cmd == "decodeid":
+                reply = await event.get_reply_message() if event.is_reply else None
+                raw = arg.strip() or (reply.raw_text if reply else "")
+                ids = re.findall(r"-100\d+|\d{5,}", raw)
+                if not ids:
+                    await event.edit("Usage: .decodeid <id> OR reply to log with .decodeid")
+                    return
+                out = []
+                for x in ids[:8]:
+                    try:
+                        ent = await client.get_entity(int(x))
+                        title = getattr(ent, "title", None) or getattr(ent, "first_name", None) or "Unknown"
+                        uname = getattr(ent, "username", None)
+                        etype = ent.__class__.__name__
+                        out.append(f"{x} -> {title} | @{uname if uname else '-'} | {etype}")
+                    except Exception as exc:
+                        out.append(f"{x} -> unresolved ({exc})")
+                await event.edit("\n".join(out)[:3900])
+
+            elif cmd == "iscypherus":
+                if not arg.strip():
+                    await event.edit("Usage: .iscypherus <@user/id>")
+                    return
+                try:
+                    ent = await client.get_entity(arg.strip())
+                    uid = getattr(ent, "id", None)
+                    found = []
+                    for lb in store.list_users():
+                        d = store.load_user(lb)
+                        if d.get("user_id") == uid:
+                            found.append(lb)
+                    if found:
+                        await event.edit(f"✅ {arg.strip()} is linked in Cypherus as: {', '.join(found)}")
+                    else:
+                        await event.edit("❌ Not found in local Cypherus linked accounts.")
+                except Exception as exc:
+                    await event.edit(f"Failed: {exc}")
+
+            elif cmd == "search":
+                if not arg.strip():
+                    await event.edit("Usage: .search <text>")
+                    return
+                await event.edit("Searching...")
+                import yt_dlp
+                def _search(q):
+                    with yt_dlp.YoutubeDL({"quiet": True}) as y:
+                        return y.extract_info(f"ytsearch5:{q}", download=False)
+                info = await asyncio.to_thread(_search, arg.strip())
+                entries = info.get("entries", [])[:5]
+                if not entries:
+                    await event.edit("No results.")
+                else:
+                    lines = ["🔎 Search results:"]
+                    for i, e in enumerate(entries, 1):
+                        lines.append(f"{i}. {e.get('title')}\n{e.get('webpage_url')}")
+                    await event.edit("\n\n".join(lines)[:3900])
 
             elif cmd == "msg":
                 parts = arg.split(maxsplit=1)
@@ -1516,6 +1579,13 @@ async def start_client(label: str, profile: dict):
     await client.start()
     me = await client.get_me()
     logger.info("[online] %s as %s (%s)", label, me.first_name, me.id)
+    try:
+        d = store.load_user(label)
+        d["user_id"] = me.id
+        d["display_name"] = me.first_name or d.get("display_name", label)
+        store.save_user(label, d)
+    except Exception:
+        pass
     await register_handlers(client, label)
     asyncio.create_task(story_auto_worker(client, label))
     return client

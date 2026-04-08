@@ -20,6 +20,10 @@
 - `.logout` : Disable current account from auto-start.
 - `.reset` : Remove local account profile/session.
 - `.msg <target> <text>` or reply + `.msg <target>` : Send text/photo/file to user/group/channel you can message.
+- `.decodeid <id>` or reply + `.decodeid` : Resolve IDs to username/title/type.
+- `.iscypherus <@user/id>` : Check if that user is linked in local Cypherus accounts.
+- `.search <text>` : Search media links quickly.
+- `.song <name>` : Downloads audio as MP3 (ffmpeg conversion).
 
 ## Automation
 - `.away <text>` : Auto-reply in private chats with your custom AFK text.
