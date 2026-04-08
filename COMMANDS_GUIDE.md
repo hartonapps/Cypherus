@@ -16,6 +16,7 @@
 - `.menu` : Show full menu.
 - `.help <command>` : Show instant usage/details for one command (example: `.help vvwatch`).
 - `.ping` : Check bot speed (latency).
+- `.vet` : Show all important setting toggles (ON/OFF status).
 - `.logout` : Disable current account from auto-start.
 - `.reset` : Remove local account profile/session.
 

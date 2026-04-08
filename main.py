@@ -42,6 +42,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.ping` → check userbot response speed
 • `.logout` → set this account inactive
 • `.reset` → delete local profile/session file
+• `.vet` → view current feature toggles/status
 
 **Automation**
 • `.away <text>` / `.away off` → AFK auto-reply
@@ -106,6 +107,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 COMMAND_HELP = {
     "menu": "Usage: .menu\nShow full command menu.",
     "ping": "Usage: .ping\nCheck response speed.",
+    "vet": "Usage: .vet\nShow ON/OFF + key settings overview.",
     "away": "Usage: .away <text> | .away off\nEnable/disable AFK auto-reply.",
     "schedule": "Usage: .schedule <10m|HH:MM> <message>\nSend a message later.",
     "filter": "Usage: .filter <word> <response>\nAuto-reply when keyword is detected.",
@@ -581,6 +583,32 @@ async def register_handlers(client: TelegramClient, label: str):
                 ms = (time.perf_counter() - t0) * 1000
                 await msg.edit(f"🏓 Pong: {ms:.2f} ms")
                 await event.delete()
+
+            elif cmd == "vet":
+                d = store.load_user(label)
+                ensure_settings(d)
+                st = d["settings"]
+                lines = [
+                    "**Cypherus Status (.vet)**",
+                    f"prefix: {st.get('prefix', '.')}",
+                    f"persona: {st.get('persona', 'default')}",
+                    f"autoread: {'ON' if st.get('autoread') else 'OFF'}",
+                    f"autotype: {'ON' if st.get('autotype') else 'OFF'}",
+                    f"alwaysonline: {'ON' if st.get('alwaysonline') else 'OFF'}",
+                    f"away: {'ON' if st.get('away', {}).get('enabled') else 'OFF'}",
+                    f"antispam: {'ON' if st.get('antispam', {}).get('enabled') else 'OFF'}",
+                    f"ghostmode: {'ON' if st.get('ghostmode') else 'OFF'}",
+                    f"anti-delete: {'ON' if st.get('anti_delete') else 'OFF'}",
+                    f"anti-edit: {'ON' if st.get('anti_edit') else 'OFF'}",
+                    f"hideonline: {'ON' if st.get('hideonline') else 'OFF'}",
+                    f"vvwatch: {'ON' if st.get('vvwatch') else 'OFF'}",
+                    f"autostoryview: {'ON' if st.get('autostory_view') else 'OFF'}",
+                    f"autostoryreact: {'ON' if st.get('autostory_react') else 'OFF'}",
+                    f"lockchat: {'ON' if st.get('lockchat') else 'OFF'}",
+                    f"filters: {len(st.get('filters', {}))}",
+                    f"blocked words: {len(st.get('blockwords', []))}",
+                ]
+                await event.edit("\n".join(lines)[:3900])
 
             elif cmd == "away":
                 if arg.strip().lower() == "off":
