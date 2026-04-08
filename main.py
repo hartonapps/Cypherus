@@ -1372,6 +1372,7 @@ async def start_control_bot() -> asyncio.Task | None:
                             elif step == "phone":
                                 st["phone"] = text
                                 try:
+                                    await send_msg(client, chat_id, "Requesting login code... please wait.")
                                     temp = TelegramClient(StringSession(), st["api_id"], st["api_hash"])
                                     await temp.connect()
                                     sent = await temp.send_code_request(st["phone"])
@@ -1380,8 +1381,8 @@ async def start_control_bot() -> asyncio.Task | None:
                                     st["step"] = "code"
                                     await send_msg(client, chat_id, "Phone wizard 5/6: send login code you received in Telegram")
                                 except Exception as exc:
-                                    await send_msg(client, chat_id, f"Failed sending code: {exc}")
-                                    pending_phone.pop(chat_id, None)
+                                    await send_msg(client, chat_id, f"Failed sending code: {exc}\nSend phone number again (with +countrycode) or press Cancel.")
+                                    st["step"] = "phone"
                             elif step == "code":
                                 temp = st.get("temp")
                                 try:
@@ -1405,12 +1406,8 @@ async def start_control_bot() -> asyncio.Task | None:
                                     st["step"] = "password"
                                     await send_msg(client, chat_id, "Phone wizard 6/6: send 2FA password")
                                 except Exception as exc:
-                                    await send_msg(client, chat_id, f"Login failed: {exc}")
-                                    try:
-                                        await temp.disconnect()
-                                    except Exception:
-                                        pass
-                                    pending_phone.pop(chat_id, None)
+                                    await send_msg(client, chat_id, f"Login failed: {exc}\nSend code again or press Cancel.")
+                                    st["step"] = "code"
                             elif step == "password":
                                 temp = st.get("temp")
                                 try:

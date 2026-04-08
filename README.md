@@ -127,3 +127,6 @@ You can skip `frontend.py` and manage accounts from a Telegram control bot.
    - Cancel/Menu
 
 This lets you manage user sessions from bot commands only.
+
+
+Note: In phone wizard, after you send your phone number, wait for "Phone wizard 5/6" prompt before sending the code. If login fails, resend the code (or Cancel).
