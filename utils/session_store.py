@@ -19,12 +19,14 @@ class SessionStore:
 
     def save_user(self, username: str, data: dict[str, Any]) -> None:
         out = dict(data)
-        out["string_session"] = encrypt_text(data["string_session"], self.key)
+        if "string_session" in data:
+            out["string_session"] = encrypt_text(data["string_session"], self.key)
         self._user_path(username).write_text(json.dumps(out, indent=2), encoding="utf-8")
 
     def load_user(self, username: str) -> dict[str, Any]:
         payload = json.loads(self._user_path(username).read_text(encoding="utf-8"))
-        payload["string_session"] = decrypt_text(payload["string_session"], self.key)
+        if "string_session" in payload:
+            payload["string_session"] = decrypt_text(payload["string_session"], self.key)
         return payload
 
     def delete_user(self, username: str) -> None:
@@ -33,4 +35,14 @@ class SessionStore:
             p.unlink()
 
     def list_users(self) -> list[str]:
-        return sorted([p.stem for p in self.users_dir.glob("*.json")])
+        out = []
+        for p in self.users_dir.glob("*.json"):
+            if p.name.startswith("."):
+                continue
+            try:
+                data = json.loads(p.read_text(encoding="utf-8"))
+                if "string_session" in data and "api_id" in data and "api_hash" in data:
+                    out.append(p.stem)
+            except Exception:
+                continue
+        return sorted(out)

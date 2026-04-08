@@ -1181,20 +1181,13 @@ async def register_handlers(client: TelegramClient, label: str):
 
 
 
-async def start_control_bot() -> TelegramClient | None:
+async def start_control_bot() -> asyncio.Task | None:
     token = os.getenv("CONTROL_BOT_TOKEN") or input("Enter control bot token (or leave blank to skip): ").strip()
     if not token:
         print("No control bot token. Continuing without controller bot.")
         return None
 
-    ctrl_api_id = int(os.getenv("CONTROL_API_ID", "0") or "0")
-    ctrl_api_hash = os.getenv("CONTROL_API_HASH", "")
-    if not ctrl_api_id:
-        ctrl_api_id = int(input("Enter CONTROL API ID for controller bot: ").strip())
-    if not ctrl_api_hash:
-        ctrl_api_hash = input("Enter CONTROL API HASH for controller bot: ").strip()
-    bot = TelegramClient("controller_bot", api_id=ctrl_api_id, api_hash=ctrl_api_hash)
-    await bot.start(bot_token=token)
+    api_base = f"https://api.telegram.org/bot{token}"
     ctrl_file = USERS_DIR / ".controller.json"
     owner_id = None
     if ctrl_file.exists():
@@ -1203,83 +1196,132 @@ async def start_control_bot() -> TelegramClient | None:
         except Exception:
             owner_id = None
 
-    async def ensure_owner(event):
+    pending_add: dict[int, dict] = {}
+
+    async def send_msg(client: httpx.AsyncClient, chat_id: int, text: str):
+        await client.post(f"{api_base}/sendMessage", json={"chat_id": chat_id, "text": text})
+
+    async def poll_loop():
         nonlocal owner_id
-        if owner_id is None:
-            owner_id = event.sender_id
-            ctrl_file.write_text(json.dumps({"owner_id": owner_id}, indent=2))
-            return True
-        return event.sender_id == owner_id
+        offset = 0
+        async with httpx.AsyncClient(timeout=35) as client:
+            while True:
+                try:
+                    res = await client.get(f"{api_base}/getUpdates", params={"timeout": 25, "offset": offset})
+                    data = res.json()
+                    if not data.get("ok"):
+                        await asyncio.sleep(2)
+                        continue
+                    for upd in data.get("result", []):
+                        offset = max(offset, upd["update_id"] + 1)
+                        msg = upd.get("message") or {}
+                        text = (msg.get("text") or "").strip()
+                        chat = msg.get("chat") or {}
+                        chat_id = chat.get("id")
+                        sender = msg.get("from") or {}
+                        sender_id = sender.get("id")
+                        if not chat_id or not sender_id:
+                            continue
 
-    @bot.on(events.NewMessage(pattern=r"^/start"))
-    async def c_start(event):
-        if not await ensure_owner(event):
-            return
-        await event.reply(
-            "Controller ready.\n"
-            "/add <label> <api_id> <api_hash> <string_session>\n"
-            "/list\n/enable <label>\n/disable <label>\n/delete <label>\n"
-            "Tip: generate StringSession once on your PC/phone and paste here."
-        )
+                        if owner_id is None:
+                            owner_id = sender_id
+                            ctrl_file.write_text(json.dumps({"owner_id": owner_id}, indent=2))
+                        if sender_id != owner_id:
+                            continue
 
-    @bot.on(events.NewMessage(pattern=r"^/add\s+"))
-    async def c_add(event):
-        if not await ensure_owner(event):
-            return
-        p = event.raw_text.split(maxsplit=4)
-        if len(p) < 5:
-            await event.reply("Usage: /add <label> <api_id> <api_hash> <string_session>")
-            return
-        _, label, api_id, api_hash, string_session = p
-        try:
-            store.save_user(label, {
-                "label": label,
-                "display_name": label,
-                "api_id": int(api_id),
-                "api_hash": api_hash,
-                "user_id": 0,
-                "string_session": string_session,
-                "active": True,
-                "settings": {},
-            })
-            await event.reply(f"Added account: {label}. Restart main.py to start this client.")
-        except Exception as exc:
-            await event.reply(f"Add failed: {exc}")
+                        if text == "/start":
+                            await send_msg(
+                                client,
+                                chat_id,
+                                "Controller ready.\n"
+                                "/add_account (interactive)\n"
+                                "/list\n/enable <label>\n/disable <label>\n/delete <label>\n"
+                                "/cancel",
+                            )
+                            continue
 
-    @bot.on(events.NewMessage(pattern=r"^/list"))
-    async def c_list(event):
-        if not await ensure_owner(event):
-            return
-        labels = store.list_users()
-        if not labels:
-            await event.reply("No users.")
-            return
-        lines = []
-        for lb in labels:
-            d = store.load_user(lb)
-            lines.append(f"{lb} active={d.get('active', True)}")
-        await event.reply("\n".join(lines))
+                        if text == "/cancel":
+                            pending_add.pop(chat_id, None)
+                            await send_msg(client, chat_id, "Cancelled.")
+                            continue
 
-    @bot.on(events.NewMessage(pattern=r"^/(enable|disable|delete)\s+"))
-    async def c_mut(event):
-        if not await ensure_owner(event):
-            return
-        cmd, label = event.raw_text[1:].split(maxsplit=1)
-        label = label.strip()
-        if cmd == "delete":
-            store.delete_user(label)
-            await event.reply(f"Deleted {label}")
-            return
-        try:
-            d = store.load_user(label)
-            d["active"] = cmd == "enable"
-            store.save_user(label, d)
-            await event.reply(f"{label} active={d['active']}")
-        except Exception as exc:
-            await event.reply(f"Error: {exc}")
+                        if text == "/add_account":
+                            pending_add[chat_id] = {"step": "label"}
+                            await send_msg(client, chat_id, "Step 1/4: send account label (example: main1)")
+                            continue
 
-    print("Control bot started.")
-    return bot
+                        if chat_id in pending_add:
+                            st = pending_add[chat_id]
+                            step = st.get("step")
+                            if step == "label":
+                                st["label"] = text
+                                st["step"] = "api_id"
+                                await send_msg(client, chat_id, "Step 2/4: send api_id")
+                            elif step == "api_id":
+                                try:
+                                    st["api_id"] = int(text)
+                                    st["step"] = "api_hash"
+                                    await send_msg(client, chat_id, "Step 3/4: send api_hash")
+                                except ValueError:
+                                    await send_msg(client, chat_id, "api_id must be integer.")
+                            elif step == "api_hash":
+                                st["api_hash"] = text
+                                st["step"] = "string_session"
+                                await send_msg(client, chat_id, "Step 4/4: send StringSession")
+                            elif step == "string_session":
+                                st["string_session"] = text
+                                try:
+                                    store.save_user(
+                                        st["label"],
+                                        {
+                                            "label": st["label"],
+                                            "display_name": st["label"],
+                                            "api_id": st["api_id"],
+                                            "api_hash": st["api_hash"],
+                                            "user_id": 0,
+                                            "string_session": st["string_session"],
+                                            "active": True,
+                                            "settings": {},
+                                        },
+                                    )
+                                    await send_msg(client, chat_id, f"Added account: {st['label']}. Restart bot to activate.")
+                                except Exception as exc:
+                                    await send_msg(client, chat_id, f"Add failed: {exc}")
+                                pending_add.pop(chat_id, None)
+                            continue
+
+                        if text == "/list":
+                            labels = store.list_users()
+                            if not labels:
+                                await send_msg(client, chat_id, "No users.")
+                            else:
+                                lines = []
+                                for lb in labels:
+                                    d = store.load_user(lb)
+                                    lines.append(f"{lb} active={d.get('active', True)}")
+                                await send_msg(client, chat_id, "\n".join(lines))
+                            continue
+
+                        if text.startswith("/enable ") or text.startswith("/disable ") or text.startswith("/delete "):
+                            cmd, label = text[1:].split(maxsplit=1)
+                            label = label.strip()
+                            if cmd == "delete":
+                                store.delete_user(label)
+                                await send_msg(client, chat_id, f"Deleted {label}")
+                            else:
+                                try:
+                                    d = store.load_user(label)
+                                    d["active"] = cmd == "enable"
+                                    store.save_user(label, d)
+                                    await send_msg(client, chat_id, f"{label} active={d['active']}")
+                                except Exception as exc:
+                                    await send_msg(client, chat_id, f"Error: {exc}")
+                            continue
+                except Exception:
+                    await asyncio.sleep(2)
+
+    print("Control bot started (Bot API polling mode).")
+    return asyncio.create_task(poll_loop())
 
 async def start_client(label: str, profile: dict):
     client = TelegramClient(StringSession(profile["string_session"]), profile["api_id"], profile["api_hash"])
@@ -1312,7 +1354,7 @@ async def main():
     else:
         print("No active user clients. Control bot can still manage accounts.")
     if control_bot:
-        tasks.append(control_bot.run_until_disconnected())
+        tasks.append(control_bot)
     if tasks:
         await asyncio.gather(*tasks)
 
