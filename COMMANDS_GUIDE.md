@@ -24,6 +24,10 @@
 - `.iscypherus <@user/id>` : Check if that user is linked in local Cypherus accounts.
 - `.search <text>` : Search media links quickly.
 - `.song <name>` : Downloads audio as MP3 (ffmpeg conversion).
+- `.setpin <pin>` : Set PIN for Cypherus hidden-chat vault.
+- `.changepin <oldpin> <newpin>` : Change vault PIN.
+- `.hide <target> <pin>` : Hide chat in Cypherus vault mode.
+- `.unhide <target> <pin>` : Restore hidden chat to normal list.
 
 ## Automation
 - `.away <text>` : Auto-reply in private chats with your custom AFK text.

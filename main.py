@@ -81,6 +81,8 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.decodeid <id>` or reply log + `.decodeid`
 • `.iscypherus <@user/id>`
 • `.search <text>`
+• `.setpin <pin>` `.changepin <old> <new>`
+• `.hide <target> <pin>` `.unhide <target> <pin>`
 
 **Group Admin**
 • `.tagall`
@@ -130,6 +132,10 @@ COMMAND_HELP = {
     "decodeid": "Usage: .decodeid <id> OR reply + .decodeid\nResolve ID to username/title/type.",
     "iscypherus": "Usage: .iscypherus <@user/id>\nCheck whether user is linked in local Cypherus accounts.",
     "search": "Usage: .search <text>\nSearch and preview media results.",
+    "setpin": "Usage: .setpin <pin>\nSet hidden-chat security PIN.",
+    "changepin": "Usage: .changepin <oldpin> <newpin>\nChange hidden-chat PIN.",
+    "hide": "Usage: .hide <target> <pin>\nHide chat using Cypherus vault mode.",
+    "unhide": "Usage: .unhide <target> <pin>\nRestore hidden chat to normal list.",
     "dl": "Usage: .dl <url>\nDownload media from URL.",
     "playlist": "Usage: .playlist <url>\nDownload playlist.",
     "song": "Usage: .song <query>\nSearch and download first song result.",
@@ -305,6 +311,8 @@ def ensure_settings(data: dict):
     s.setdefault("alwaysonline", False)
     s.setdefault("welcome", {})
     s.setdefault("goodbye", {})
+    s.setdefault("vault_pin", "")
+    s.setdefault("hidden_chats", {})
     s.setdefault("autostory_view", False)
     s.setdefault("autostory_react", False)
 
@@ -615,6 +623,7 @@ async def register_handlers(client: TelegramClient, label: str):
                     f"lockchat: {'ON' if st.get('lockchat') else 'OFF'}",
                     f"filters: {len(st.get('filters', {}))}",
                     f"blocked words: {len(st.get('blockwords', []))}",
+                    f"hidden chats: {len(st.get('hidden_chats', {}))}",
                 ]
                 await event.edit("\n".join(lines)[:3900])
 
@@ -1129,10 +1138,82 @@ async def register_handlers(client: TelegramClient, label: str):
                 else:
                     await event.edit(await translate_text(m.group(1), m.group(2)))
 
+            elif cmd == "setpin":
+                pin = arg.strip()
+                if not pin:
+                    await event.edit("Usage: .setpin <pin>")
+                    return
+                def m(d):
+                    ensure_settings(d)
+                    d["settings"]["vault_pin"] = pin
+                await update_user_settings(label, m)
+                await event.edit("Vault PIN set.")
+
+            elif cmd == "changepin":
+                parts = arg.split(maxsplit=1)
+                if len(parts) < 2:
+                    await event.edit("Usage: .changepin <oldpin> <newpin>")
+                    return
+                old, new = parts[0], parts[1]
+                d = store.load_user(label); ensure_settings(d)
+                current = d["settings"].get("vault_pin", "")
+                if not current:
+                    await event.edit("No PIN set yet. Use .setpin first.")
+                    return
+                if old != current:
+                    await event.edit("Wrong old PIN.")
+                    return
+                d["settings"]["vault_pin"] = new
+                store.save_user(label, d)
+                await event.edit("PIN changed.")
+
+            elif cmd in {"hide", "unhide"}:
+                parts = arg.split(maxsplit=1)
+                if len(parts) < 2:
+                    await event.edit(f"Usage: .{cmd} <target> <pin>")
+                    return
+                target, pin = parts[0], parts[1].strip()
+                d = store.load_user(label); ensure_settings(d)
+                vault_pin = d["settings"].get("vault_pin", "")
+                if not vault_pin:
+                    await event.edit("No PIN set. Use .setpin first.")
+                    return
+                if pin != vault_pin:
+                    await event.edit("Invalid PIN.")
+                    return
+                try:
+                    ent = await client.get_entity(target)
+                    inp = await client.get_input_entity(ent)
+                    hid = d["settings"].setdefault("hidden_chats", {})
+                    key = str(ent.id)
+                    if cmd == "hide":
+                        if key in hid:
+                            await event.edit("That chat is already hidden.")
+                            return
+                        hid[key] = {"title": getattr(ent, "title", None) or getattr(ent, "first_name", None) or target}
+                        try:
+                            await client(functions.folders.EditPeerFoldersRequest(folder_peers=[types.InputFolderPeer(peer=inp, folder_id=1)]))
+                        except Exception:
+                            pass
+                        await event.edit("Chat hidden (Cypherus vault mode).")
+                    else:
+                        if key not in hid:
+                            await event.edit("That chat was not hidden.")
+                            return
+                        hid.pop(key, None)
+                        try:
+                            await client(functions.folders.EditPeerFoldersRequest(folder_peers=[types.InputFolderPeer(peer=inp, folder_id=0)]))
+                        except Exception:
+                            pass
+                        await event.edit("Chat unhidden and restored.")
+                    store.save_user(label, d)
+                except Exception as exc:
+                    await event.edit(f"Failed: {exc}")
+
             elif cmd == "decodeid":
                 reply = await event.get_reply_message() if event.is_reply else None
                 raw = arg.strip() or (reply.raw_text if reply else "")
-                ids = re.findall(r"-100\d+|\d{5,}", raw)
+                ids = re.findall(r"-?\d+", raw)
                 if not ids:
                     await event.edit("Usage: .decodeid <id> OR reply to log with .decodeid")
                     return
