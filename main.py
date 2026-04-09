@@ -50,10 +50,8 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.filter <word> <response>` → keyword auto-reply
 
 **Privacy / Logs**
-• `.ghostmode on|off`
 • `.anti-delete on|off`
 • `.anti-edit on|off`
-• `.hideonline on|off`
 
 **Media**
 • `.vvwatch on|off` → monitor expiring/view-once
@@ -289,10 +287,8 @@ def ensure_settings(data: dict):
     s.setdefault("antispam", {"enabled": False, "limit": 6, "window": 12})
     s.setdefault("away", {"enabled": False, "text": "I'm busy, I'll reply later."})
     s.setdefault("filters", {})
-    s.setdefault("ghostmode", False)
     s.setdefault("anti_delete", False)
     s.setdefault("anti_edit", False)
-    s.setdefault("hideonline", False)
     s.setdefault("vvwatch", True)
     s.setdefault("warns", {})
     s.setdefault("persona", "default")
@@ -613,10 +609,8 @@ async def register_handlers(client: TelegramClient, label: str):
                     f"alwaysonline: {'ON' if st.get('alwaysonline') else 'OFF'}",
                     f"away: {'ON' if st.get('away', {}).get('enabled') else 'OFF'}",
                     f"antispam: {'ON' if st.get('antispam', {}).get('enabled') else 'OFF'}",
-                    f"ghostmode: {'ON' if st.get('ghostmode') else 'OFF'}",
                     f"anti-delete: {'ON' if st.get('anti_delete') else 'OFF'}",
                     f"anti-edit: {'ON' if st.get('anti_edit') else 'OFF'}",
-                    f"hideonline: {'ON' if st.get('hideonline') else 'OFF'}",
                     f"vvwatch: {'ON' if st.get('vvwatch') else 'OFF'}",
                     f"autostoryview: {'ON' if st.get('autostory_view') else 'OFF'}",
                     f"autostoryreact: {'ON' if st.get('autostory_react') else 'OFF'}",
@@ -952,7 +946,7 @@ async def register_handlers(client: TelegramClient, label: str):
                     await update_user_settings(label, m)
                     await event.edit(f"Filter set for: {word}")
 
-            elif cmd in {"ghostmode", "anti-delete", "anti-edit", "hideonline", "vvwatch", "antispam", "autostoryview", "autostoryreact"}:
+            elif cmd in {"anti-delete", "anti-edit", "vvwatch", "antispam", "autostoryview", "autostoryreact"}:
                 state = arg.strip().lower()
                 if state not in {"on", "off"}:
                     await event.edit(f"Usage: .{cmd} on|off")
@@ -1190,21 +1184,29 @@ async def register_handlers(client: TelegramClient, label: str):
                         if key in hid:
                             await event.edit("That chat is already hidden.")
                             return
-                        hid[key] = {"title": getattr(ent, "title", None) or getattr(ent, "first_name", None) or target}
+                        hid[key] = {"title": getattr(ent, "title", None) or getattr(ent, "first_name", None) or target, "blocked": False}
                         try:
-                            await client(functions.folders.EditPeerFoldersRequest(folder_peers=[types.InputFolderPeer(peer=inp, folder_id=1)]))
+                            await client(functions.messages.DeleteHistoryRequest(peer=inp, max_id=0, revoke=False, just_clear=True))
                         except Exception:
                             pass
-                        await event.edit("Chat hidden (Cypherus vault mode).")
+                        try:
+                            if isinstance(ent, types.User):
+                                await client(functions.contacts.BlockRequest(id=inp))
+                                hid[key]["blocked"] = True
+                        except Exception:
+                            pass
+                        await event.edit("Chat hidden in Cypherus vault mode (best effort, non-delete).")
                     else:
                         if key not in hid:
                             await event.edit("That chat was not hidden.")
                             return
+                        meta = hid.get(key, {})
+                        if meta.get("blocked"):
+                            try:
+                                await client(functions.contacts.UnblockRequest(id=inp))
+                            except Exception:
+                                pass
                         hid.pop(key, None)
-                        try:
-                            await client(functions.folders.EditPeerFoldersRequest(folder_peers=[types.InputFolderPeer(peer=inp, folder_id=0)]))
-                        except Exception:
-                            pass
                         await event.edit("Chat unhidden and restored.")
                     store.save_user(label, d)
                 except Exception as exc:
@@ -1217,16 +1219,29 @@ async def register_handlers(client: TelegramClient, label: str):
                 if not ids:
                     await event.edit("Usage: .decodeid <id> OR reply to log with .decodeid")
                     return
+                dialog_map = {}
+                async for dlg in client.iter_dialogs(limit=300):
+                    dialog_map[dlg.id] = dlg.entity
                 out = []
                 for x in ids[:8]:
+                    xi = int(x)
                     try:
-                        ent = await client.get_entity(int(x))
+                        ent = await client.get_entity(xi)
                         title = getattr(ent, "title", None) or getattr(ent, "first_name", None) or "Unknown"
                         uname = getattr(ent, "username", None)
                         etype = ent.__class__.__name__
                         out.append(f"{x} -> {title} | @{uname if uname else '-'} | {etype}")
                     except Exception as exc:
-                        out.append(f"{x} -> unresolved ({exc})")
+                        ent = dialog_map.get(xi)
+                        if ent:
+                            title = getattr(ent, "title", None) or getattr(ent, "first_name", None) or "Unknown"
+                            uname = getattr(ent, "username", None)
+                            etype = ent.__class__.__name__
+                            out.append(f"{x} -> {title} | @{uname if uname else '-'} | {etype} (from dialogs)")
+                        elif xi > 0:
+                            out.append(f"{x} -> User ID exists but not accessible (not in contacts/mutual chats)")
+                        else:
+                            out.append(f"{x} -> unresolved ({exc})")
                 await event.edit("\n".join(out)[:3900])
 
             elif cmd == "iscypherus":

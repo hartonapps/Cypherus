@@ -26,7 +26,7 @@
 - `.song <name>` : Downloads audio as MP3 (ffmpeg conversion).
 - `.setpin <pin>` : Set PIN for Cypherus hidden-chat vault.
 - `.changepin <oldpin> <newpin>` : Change vault PIN.
-- `.hide <target> <pin>` : Hide chat in Cypherus vault mode.
+- `.hide <target> <pin>` : Hide chat in Cypherus vault mode (best-effort non-delete).
 - `.unhide <target> <pin>` : Restore hidden chat to normal list.
 
 ## Automation
@@ -37,10 +37,8 @@
 - `.workflow create` : (planned) multi-step workflows.
 
 ## Privacy / Security
-- `.ghostmode on|off` : Toggle stealth mode flag.
 - `.anti-delete on|off` : If enabled, deleted message text is logged to Saved Messages.
 - `.anti-edit on|off` : If enabled, edited messages are logged (old and new text).
-- `.hideonline on|off` : Toggle hide-online flag.
 - `.lockchat on|off` : Private lock mode.
 - `.blockword <word>` : Auto-remove messages containing blocked words.
 
