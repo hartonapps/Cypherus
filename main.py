@@ -1693,7 +1693,10 @@ async def start_control_bot() -> asyncio.Task | None:
                                     if not temp.is_connected():
                                         await temp.connect()
                                     code_value = (text or "").strip().replace(" ", "")
-                                    await temp.sign_in(phone=st["phone"], code=code_value, phone_code_hash=st.get("phone_code_hash"))
+                                    await asyncio.wait_for(
+                                        temp.sign_in(phone=st["phone"], code=code_value, phone_code_hash=st.get("phone_code_hash")),
+                                        timeout=45,
+                                    )
                                     me = await temp.get_me()
                                     string_session = temp.session.save()
                                     store.save_user(st["label"], {
@@ -1712,13 +1715,16 @@ async def start_control_bot() -> asyncio.Task | None:
                                 except errors.SessionPasswordNeededError:
                                     st["step"] = "password"
                                     await send_msg(client, chat_id, "Phone wizard 6/6: send 2FA password")
+                                except asyncio.TimeoutError:
+                                    await send_msg(client, chat_id, "Login timed out waiting for Telegram response.\nSend code again or press Cancel.")
+                                    st["step"] = "code"
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"Login failed: {exc}\nSend code again or press Cancel.")
                                     st["step"] = "code"
                             elif step == "password":
                                 temp = st.get("temp")
                                 try:
-                                    await temp.sign_in(password=text)
+                                    await asyncio.wait_for(temp.sign_in(password=text), timeout=45)
                                     me = await temp.get_me()
                                     string_session = temp.session.save()
                                     store.save_user(st["label"], {
@@ -1733,6 +1739,10 @@ async def start_control_bot() -> asyncio.Task | None:
                                     })
                                     await send_msg(client, chat_id, f"Added account by phone+2FA: {st['label']} (restart to activate)", menu=True)
                                     await temp.disconnect()
+                                except asyncio.TimeoutError:
+                                    await send_msg(client, chat_id, "2FA login timed out waiting for Telegram response.\nSend password again or press Cancel.")
+                                    st["step"] = "password"
+                                    continue
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"2FA failed: {exc}")
                                 pending_phone.pop(chat_id, None)
