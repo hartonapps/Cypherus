@@ -603,7 +603,7 @@ async def register_handlers(client: TelegramClient, label: str):
                 await event.edit("Updating and restarting...")
                 import subprocess, sys
                 try:
-                    pull = await asyncio.to_thread(subprocess.run, ["git", "pull", "origin", "codex/develop-multi-user-telegram-userbot-with-frontend-r491v5"], capture_output=True, text=True)
+                    pull = await asyncio.to_thread(subprocess.run, ["git", "pull", "upstream", "codex/develop-multi-user-telegram-userbot-with-frontend-fv0hij"], capture_output=True, text=True)
                     req = await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], capture_output=True, text=True)
                     msg = f"git: {pull.returncode}\n{(pull.stdout or pull.stderr)[-500:]}\npip: {req.returncode}"
                     if req.returncode != 0:
@@ -1657,7 +1657,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 temp = None
                                 try:
                                     try:
-                                        await send_msg(client, chat_id, "Requesting login code... please wait.")
+                                        await send_msg(client, chat_id, "Requesting login code from Telegram... please wait. OTP will come to your Telegram app/SMS.")
                                     except Exception:
                                         pass
                                     temp = TelegramClient(StringSession(), st["api_id"], st["api_hash"])
@@ -1667,14 +1667,14 @@ async def start_control_bot() -> asyncio.Task | None:
                                     st["temp"] = temp
                                     st["step"] = "code"
                                     try:
-                                        await send_msg(client, chat_id, "Phone wizard 5/6: send login code you received in Telegram")
+                                        await send_msg(client, chat_id, "Phone wizard 5/6: send login code. Check your official Telegram app/SMS for OTP (it is NOT sent by this bot).")
                                     except Exception:
                                         pass
                                 except Exception as exc:
                                     # Sometimes Telegram may still deliver code even if request flow throws.
                                     if st.get("temp") and st.get("phone_code_hash"):
                                         st["step"] = "code"
-                                        await send_msg(client, chat_id, f"Code request warning: {exc!r}\nIf you received the code, send it now.")
+                                        await send_msg(client, chat_id, f"Code request warning: {exc!r}\nIf OTP arrived in Telegram app/SMS, send it now. If not, resend phone or Cancel.")
                                     else:
                                         try:
                                             if temp:
