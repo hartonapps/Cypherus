@@ -603,7 +603,7 @@ async def register_handlers(client: TelegramClient, label: str):
                 await event.edit("Updating and restarting...")
                 import subprocess, sys
                 try:
-                    pull = await asyncio.to_thread(subprocess.run, ["git", "pull", "origin", "codex/develop-multi-user-telegram-userbot-with-frontend-fv0hij"], capture_output=True, text=True)
+                    pull = await asyncio.to_thread(subprocess.run, ["git", "pull"], capture_output=True, text=True)
                     req = await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], capture_output=True, text=True)
                     msg = f"git: {pull.returncode}\n{(pull.stdout or pull.stderr)[-500:]}\npip: {req.returncode}"
                     if req.returncode != 0:
@@ -1688,12 +1688,16 @@ async def start_control_bot() -> asyncio.Task | None:
                                 try:
                                     lowered = (text or "").strip().lower()
                                     if lowered in {"send code again", "resend", "resend code", "/resend"}:
-                                        sent = await temp.send_code_request(st["phone"])
+                                        if st.get("phone_code_hash"):
+                                            sent = await temp.resend_code_request(st["phone"], st["phone_code_hash"])
+                                        else:
+                                            sent = await temp.send_code_request(st["phone"])
                                         st["phone_code_hash"] = sent.phone_code_hash
                                         await send_msg(client, chat_id, "Requested a fresh OTP from Telegram. Send the new code from your Telegram app/SMS.")
                                         st["step"] = "code"
                                         continue
-                                    await temp.sign_in(phone=st["phone"], code=text, phone_code_hash=st["phone_code_hash"])
+                                    code_value = (text or "").strip().replace(" ", "")
+                                    await temp.sign_in(phone=st["phone"], code=code_value, phone_code_hash=st["phone_code_hash"])
                                     me = await temp.get_me()
                                     string_session = temp.session.save()
                                     store.save_user(st["label"], {
@@ -1715,7 +1719,10 @@ async def start_control_bot() -> asyncio.Task | None:
                                 except Exception as exc:
                                     if isinstance(exc, errors.PhoneCodeExpiredError):
                                         try:
-                                            sent = await temp.send_code_request(st["phone"])
+                                            if st.get("phone_code_hash"):
+                                                sent = await temp.resend_code_request(st["phone"], st["phone_code_hash"])
+                                            else:
+                                                sent = await temp.send_code_request(st["phone"])
                                             st["phone_code_hash"] = sent.phone_code_hash
                                             await send_msg(client, chat_id, "Your previous OTP expired. I requested a fresh OTP from Telegram.\nSend the new code from your Telegram app/SMS or press Cancel.")
                                         except Exception as resend_exc:
