@@ -25,7 +25,7 @@ from config import (
     SAVE_EXTRACTED_TO_SAVED_MESSAGES,
     USERS_DIR,
 )
-from utils.ai_tools import ask_free_ai, summarize_text, translate_text
+from utils.ai_tools import ask_free_ai, summarize_text, translate_text, generate_horde_image
 from utils.downloaders import download_media, extract_metadata
 from utils.helpers import build_qr_png_bytes, safe_calc, shorten_url
 from utils.logger import setup_logger
@@ -69,6 +69,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 
 **AI / Tools**
 • `.gpt <text>` / `.ask <text>`
+• `.generateimg <prompt>`
 • `.summarize <text>`
 • `.translate <text> to <lang>`
 • `.qr <text>`
@@ -86,6 +87,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.kick @user` `.promote @user` `.demote @user`
 • `.warn @user` `.mute @user 10m`
 • `.join <invite_link>`
+• `.leave <username/link>` `.leavesilently <username/link>`
 • `.pin` / `.unpin`
 
 **Extra Aliases / Search / Settings**
@@ -115,6 +117,7 @@ COMMAND_HELP = {
     "anti-edit": "Usage: .anti-edit on|off\nLog old/new message text on edits.",
     "gpt": "Usage: .gpt <text>\nAsk AI with current persona + memory.",
     "ask": "Usage: .ask <text>\nAlias of .gpt.",
+    "generateimg": "Usage: .generateimg <prompt>\nGenerate an image with AI Horde and return it.",
     "summarize": "Usage: .summarize <text> or reply + .summarize\nSummarize text.",
     "translate": "Usage: .translate <text> to <lang>\nTranslate text.",
     "msg": "Usage: .msg <target> <text> OR reply + .msg <target>\nSend message/media to user/group.",
@@ -138,6 +141,8 @@ COMMAND_HELP = {
     "list": "Usage: .list\nList saved keys.",
     "daily": "Usage: .daily\nClaim daily XP.",
     "rank": "Usage: .rank\nShow XP + level.",
+    "leave": "Usage: .leave <username/link> OR .leave\nLeave target/current chat.",
+    "leavesilently": "Usage: .leavesilently <username/link> OR .leavesilently\nLeave chat quietly (best effort).",
     "backup": "Usage: .backup\nCreate local profile backup.",
     "restore": "Usage: .restore\nRestore local profile backup.",
     "tiktok": "Usage: .tiktok <url>\nDownload TikTok video.",
@@ -1143,6 +1148,22 @@ async def register_handlers(client: TelegramClient, label: str):
                 except Exception as exc:
                     await event.edit(f"Join failed: {exc}")
 
+            elif cmd in {"leave", "leavesilently"}:
+                target = arg.strip()
+                try:
+                    if target:
+                        clean = target.replace("https://t.me/", "").strip()
+                        ent = await client.get_entity(clean)
+                        await client.delete_dialog(ent)
+                    else:
+                        await client.delete_dialog(event.chat_id)
+                    if cmd == "leavesilently":
+                        await event.edit("Left chat (best effort silent). Telegram may still show a service message in some groups.")
+                    else:
+                        await event.edit("Left chat successfully.")
+                except Exception as exc:
+                    await event.edit(f"Leave failed: {exc}")
+
             elif cmd in {"gpt", "ask"}:
                 if not arg:
                     await event.edit(f"Usage: .{cmd} <text>")
@@ -1155,6 +1176,18 @@ async def register_handlers(client: TelegramClient, label: str):
                     d["settings"]["chat_memory"][str(event.chat_id)] = mem[-8:]
                     store.save_user(label, d)
                     await event.edit(out[:3900])
+
+            elif cmd == "generateimg":
+                if not arg.strip():
+                    await event.edit("Usage: .generateimg <prompt>")
+                else:
+                    await event.edit("Generating image with AI Horde... please wait.")
+                    result = await generate_horde_image(arg.strip())
+                    if result.startswith("http"):
+                        await client.send_file(event.chat_id, result, caption="Here is your AI generated image 🎨")
+                        await event.delete()
+                    else:
+                        await event.edit(result[:3900])
 
             elif cmd == "summarize":
                 text = arg or ((await event.get_reply_message()).raw_text if event.is_reply else "")
