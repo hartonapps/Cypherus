@@ -40,6 +40,8 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 **Core**
 • `.menu` / `.help` → show this menu
 • `.ping` → check userbot response speed
+• `.profile` → show Cypherus profile/status
+• `.mode public|private` → set visibility mode
 • `.getsettings` → view current feature toggles/status
 • `.restart` → pull updates + restart service
 
@@ -106,6 +108,8 @@ COMMAND_HELP = {
     "menu": "Usage: .menu\nShow full command menu.",
     "ping": "Usage: .ping\nCheck response speed.",
     "getsettings": "Usage: .getsettings\nShow ON/OFF + key settings overview.",
+    "profile": "Usage: .profile\nShow account profile and Cypherus settings summary.",
+    "mode": "Usage: .mode public|private\nSet command visibility mode.",
     "restart": "Usage: .restart\nPull updates and restart process.",
     "unlinktoken": "Usage: .unlinktoken\nRemove saved control-bot token.",
     "away": "Usage: .away <text> | .away off\nEnable/disable AFK auto-reply.",
@@ -299,6 +303,7 @@ def ensure_settings(data: dict):
     s.setdefault("hidden_chats", {})
     s.setdefault("autostory_view", False)
     s.setdefault("autostory_react", False)
+    s.setdefault("mode", "private")
 
 
 async def run_scheduled_send(client: TelegramClient, chat_id: int, delay: int, text: str):
@@ -414,6 +419,13 @@ async def register_handlers(client: TelegramClient, label: str):
         data = store.load_user(label)
         ensure_settings(data)
         settings = data["settings"]
+        if event.is_private and not event.out and (msg.raw_text or "").startswith(get_user_prefix(label)):
+            in_cmd, _ = parse_command((msg.raw_text or "").replace(get_user_prefix(label), COMMAND_PREFIX, 1))
+            if settings.get("mode", "private") == "public" and in_cmd in {"ping", "menu", "help"}:
+                if in_cmd == "ping":
+                    await event.reply("🏓 Pong (public mode)")
+                else:
+                    await event.reply("Cypherus is active. Public mode allows limited reply commands.")
         if settings.get("autoread", False):
             await client.send_read_acknowledge(event.chat_id, msg)
         if settings.get("autotype", False) and event.is_private:
@@ -582,13 +594,40 @@ async def register_handlers(client: TelegramClient, label: str):
 
             if cmd in {"help", "menu"}:
                 await event.edit(resolve_help(arg if cmd == "help" else ""))
+            elif cmd == "profile":
+                d = store.load_user(label); ensure_settings(d)
+                st = d["settings"]
+                await event.edit(
+                    f"**Cypherus Profile**\n"
+                    f"label: {d.get('label', label)}\n"
+                    f"display: {d.get('display_name', '-')}\n"
+                    f"owner: {st.get('ownername', 'Owner')}\n"
+                    f"botname: {st.get('botname', 'Cypherus')}\n"
+                    f"mode: {st.get('mode', 'private')}\n"
+                    f"linked_at: {d.get('linked_at', 'unknown')}"
+                )
+            elif cmd == "mode":
+                mval = arg.strip().lower()
+                if mval not in {"public", "private"}:
+                    await event.edit("Usage: .mode public|private")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["mode"] = mval
+                    await update_user_settings(label, m)
+                    await event.edit(f"Mode set to {mval}.")
             elif cmd == "restart":
                 await event.edit("Updating and restarting...")
                 import subprocess, sys
                 try:
                     pull = await asyncio.to_thread(subprocess.run, ["git", "pull"], capture_output=True, text=True)
                     req = await asyncio.to_thread(subprocess.run, [sys.executable, "-m", "pip", "install", "-r", "requirements.txt"], capture_output=True, text=True)
-                    msg = f"git: {pull.returncode}\n{(pull.stdout or pull.stderr)[-500:]}\npip: {req.returncode}"
+                    pull_out = (pull.stdout or pull.stderr or "").strip()
+                    if "Already up to date." in pull_out or "Already up-to-date." in pull_out:
+                        msg = "No updates available. Already up to date.\n"
+                    else:
+                        msg = f"git: {pull.returncode}\n{pull_out[-500:]}\n"
+                    msg += f"pip: {req.returncode}"
                     if req.returncode != 0:
                         msg += "\nDependency install failed. Please install manually then restart."
                         await event.edit(msg[:3900])
@@ -1155,14 +1194,16 @@ async def register_handlers(client: TelegramClient, label: str):
                         clean = target.replace("https://t.me/", "").strip()
                         ent = await client.get_entity(clean)
                         await client.delete_dialog(ent)
+                        await event.edit("Left target chat successfully.")
                     else:
+                        await save_message_to_saved(client, "Cypherus: leaving current chat completed.")
                         await client.delete_dialog(event.chat_id)
-                    if cmd == "leavesilently":
-                        await event.edit("Left chat (best effort silent). Telegram may still show a service message in some groups.")
-                    else:
-                        await event.edit("Left chat successfully.")
+                        return
                 except Exception as exc:
-                    await event.edit(f"Leave failed: {exc}")
+                    try:
+                        await event.edit(f"Leave failed: {exc}")
+                    except Exception:
+                        await save_message_to_saved(client, f"Cypherus leave failed: {exc}")
 
             elif cmd in {"gpt", "ask"}:
                 if not arg:
@@ -1184,8 +1225,11 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit("Generating image with AI Horde... please wait.")
                     result = await generate_horde_image(arg.strip())
                     if result.startswith("http"):
-                        await client.send_file(event.chat_id, result, caption="Here is your AI generated image 🎨")
-                        await event.delete()
+                        try:
+                            await client.send_file(event.chat_id, result, caption="Here is your AI generated image 🎨")
+                            await event.delete()
+                        except Exception:
+                            await event.edit(f"Image ready: {result}")
                     else:
                         await event.edit(result[:3900])
 
@@ -1792,7 +1836,17 @@ async def start_client(label: str, profile: dict):
         d = store.load_user(label)
         d["user_id"] = me.id
         d["display_name"] = me.first_name or d.get("display_name", label)
+        if not d.get("linked_at"):
+            d["linked_at"] = datetime.utcnow().isoformat()
         store.save_user(label, d)
+        if not d.get("setup_notice_sent"):
+            linked_at = d.get("linked_at", datetime.utcnow().isoformat())
+            await save_message_to_saved(
+                client,
+                f"Cypherus has been setup on your account.\nUser: @{me.username or me.id}\nLinked at: {linked_at} UTC",
+            )
+            d["setup_notice_sent"] = True
+            store.save_user(label, d)
     except Exception:
         pass
     await register_handlers(client, label)
