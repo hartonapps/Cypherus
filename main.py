@@ -1705,8 +1705,12 @@ async def start_control_bot() -> asyncio.Task | None:
                                     code_value = (text or "").strip().replace(" ", "")
                                     try:
                                         await temp.sign_in(phone=st["phone"], code=code_value)
-                                    except (errors.PhoneCodeHashEmptyError, errors.PhoneCodeHashInvalidError):
-                                        await temp.sign_in(phone=st["phone"], code=code_value, phone_code_hash=st.get("phone_code_hash"))
+                                    except Exception as hash_exc:
+                                        hash_text = str(hash_exc).lower()
+                                        if "phone code hash" in hash_text and ("invalid" in hash_text or "empty" in hash_text):
+                                            await temp.sign_in(phone=st["phone"], code=code_value, phone_code_hash=st.get("phone_code_hash"))
+                                        else:
+                                            raise
                                     me = await temp.get_me()
                                     string_session = temp.session.save()
                                     store.save_user(st["label"], {
@@ -1727,7 +1731,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                     await send_msg(client, chat_id, "Phone wizard 6/6: send 2FA password")
                                 except Exception as exc:
                                     exc_text = str(exc).lower()
-                                    if isinstance(exc, errors.PhoneCodeExpiredError) or "code has expired" in exc_text or "phone code expired" in exc_text:
+                                    if isinstance(exc, getattr(errors, "PhoneCodeExpiredError", tuple())) or "code has expired" in exc_text or "phone code expired" in exc_text:
                                         try:
                                             if st.get("phone_code_hash"):
                                                 sent = await temp.resend_code_request(st["phone"], st["phone_code_hash"])
@@ -1747,7 +1751,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                             "Please request a brand-new code from Telegram and send it here.\n"
                                             "Type 'resend' now or press Cancel to restart."
                                         )
-                                    elif isinstance(exc, errors.PhoneCodeInvalidError):
+                                    elif isinstance(exc, getattr(errors, "PhoneCodeInvalidError", tuple())) or "phone code invalid" in exc_text:
                                         await send_msg(client, chat_id, "Invalid OTP. Please send the latest code from your Telegram app/SMS.\nIf needed, type 'resend' for a new code or press Cancel.")
                                     else:
                                         await send_msg(client, chat_id, f"Login failed: {exc}\nSend code again (or type 'resend') or press Cancel.")
