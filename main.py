@@ -88,19 +88,12 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.join <invite_link>`
 • `.pin` / `.unpin`
 
-**Smart / Viral / Utility+**
-• `.persona calm|savage|default` `.generate` `.code` `.teach`
-• `.roast @user` `.ship @u1 @u2` `.rate @user` `.vibecheck` `.truth` `.dare`
-• `.lockchat on|off` `.blockword <word>` `.stats` `.activity @user` `.usage`
-• `.backup` `.restore` `.save <name>` (reply) `.get <name>` `.list`
-• `.daily` `.rank` `.genpass`
-
 **Extra Aliases / Search / Settings**
 • `.tiktok` `.instagram` `.twitter` `.video` `.song`
 • `.qrcode` `.tinyurl` `.sticker` `.toimage` `.tourl`
 • `.lyrics` `.define` `.weather` `.jokes` `.memes` `.quotes`
 • `.setprefix` `.setbotname` `.setownername`
-• `.autoread on|off` `.autotype on|off` `.alwaysonline on|off`
+• `.autoread on|off` `.autotype on|off`
 • `.setwelcome <text>` `.setgoodbye <text>` `.link`
 • `.autostoryview on|off` `.autostoryreact on|off`
 """
@@ -120,9 +113,6 @@ COMMAND_HELP = {
     "vvsave": "Usage: reply media + .vvsave\nForce save replied media to Saved Messages.",
     "anti-delete": "Usage: .anti-delete on|off\nRecover deleted message text from cache.",
     "anti-edit": "Usage: .anti-edit on|off\nLog old/new message text on edits.",
-    "lockchat": "Usage: .lockchat on|off\nBlock private incoming chats with lock reply.",
-    "blockword": "Usage: .blockword <word>\nDelete messages containing that word.",
-    "persona": "Usage: .persona default|calm|savage\nSwitch AI personality mode.",
     "gpt": "Usage: .gpt <text>\nAsk AI with current persona + memory.",
     "ask": "Usage: .ask <text>\nAlias of .gpt.",
     "summarize": "Usage: .summarize <text> or reply + .summarize\nSummarize text.",
@@ -146,21 +136,10 @@ COMMAND_HELP = {
     "save": "Usage: reply message + .save <name>\nSave message reference by key.",
     "get": "Usage: .get <name>\nRecall saved message by key.",
     "list": "Usage: .list\nList saved keys.",
-    "stats": "Usage: .stats\nShow usage counters + active chats.",
-    "usage": "Usage: .usage\nQuick usage summary.",
     "daily": "Usage: .daily\nClaim daily XP.",
     "rank": "Usage: .rank\nShow XP + level.",
-    "roast": "Usage: .roast @user\nSend fun roast.",
-    "ship": "Usage: .ship @u1 @u2\nGenerate compatibility score.",
-    "rate": "Usage: .rate @user\nRate user 1-10.",
-    "vibecheck": "Usage: .vibecheck\nRandom vibe result.",
-    "truth": "Usage: .truth\nTruth prompt.",
-    "dare": "Usage: .dare\nDare prompt.",
     "backup": "Usage: .backup\nCreate local profile backup.",
     "restore": "Usage: .restore\nRestore local profile backup.",
-    "generate": "Usage: .generate <prompt>\nGenerate stories/captions/scripts.",
-    "code": "Usage: .code <task>\nGenerate or fix code.",
-    "teach": "Usage: .teach <topic>\nExplain step-by-step.",
     "tiktok": "Usage: .tiktok <url>\nDownload TikTok video.",
     "instagram": "Usage: .instagram <url>\nDownload Instagram video/reel.",
     "twitter": "Usage: .twitter <url>\nDownload Twitter/X video.",
@@ -173,7 +152,6 @@ COMMAND_HELP = {
     "setownername": "Usage: .setownername <name>\nSet owner name setting.",
     "autoread": "Usage: .autoread on|off\nAuto mark chats as read.",
     "autotype": "Usage: .autotype on|off\nSend typing action.",
-    "alwaysonline": "Usage: .alwaysonline on|off\nAttempt always-online status.",
     "qrcode": "Usage: .qrcode <text>\nGenerate QR code.",
     "tinyurl": "Usage: .tinyurl <url>\nShorten URL.",
     "sticker": "Usage: reply image + .sticker\nConvert image to sticker.",
@@ -592,7 +570,7 @@ async def register_handlers(client: TelegramClient, label: str):
             data["settings"]["stats"]["messages_sent"] = int(data["settings"]["stats"].get("messages_sent", 0)) + 1
             store.save_user(label, data)
 
-            removed_cmds = {"persona","generate","code","teach","roast","ship","rate","vibecheck","truth","dare","lockchat","blockword","stats","activity","usage","daily","rank","genpass","video","jokes","memes","weather","define","tourl","ghostmode","hideonline"}
+            removed_cmds = {"persona","generate","code","teach","roast","ship","rate","vibecheck","truth","dare","lockchat","blockword","stats","activity","usage","alwaysonline","daily","rank","genpass","video","jokes","memes","weather","define","tourl","ghostmode","hideonline"}
             if cmd in removed_cmds:
                 await event.edit("This feature was removed in current build.")
                 return
@@ -671,7 +649,7 @@ async def register_handlers(client: TelegramClient, label: str):
                 else:
                     await event.edit("Usage: .away <text> OR .away off")
 
-            elif cmd in {"persona","generate","code","teach","roast","ship","rate","vibecheck","truth","dare","lockchat","blockword","stats","activity","usage","daily","rank","genpass","video","jokes","memes","weather","define","tourl"}:
+            elif cmd in {"persona","generate","code","teach","roast","ship","rate","vibecheck","truth","dare","lockchat","blockword","stats","activity","usage","alwaysonline","daily","rank","genpass","video","jokes","memes","weather","define","tourl"}:
                 await event.edit("This feature was removed in current build.")
 
             elif cmd == "persona":
