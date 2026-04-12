@@ -1790,10 +1790,12 @@ async def start_client(label: str, profile: dict):
 
 
 async def main():
-    control_bot = await start_control_bot()
     labels = store.list_users()
     if not labels:
-        print("No user accounts found yet. Use control bot /add command or run frontend.py.")
+        print("No user accounts found yet. Launching frontend.py...")
+        import frontend
+        frontend.main()
+        return
     clients = []
     for label in labels:
         p = store.load_user(label)
@@ -1808,9 +1810,10 @@ async def main():
         print(f"Started {len(clients)} userbot client(s). Ctrl+C to stop.")
         tasks.extend([c.run_until_disconnected() for c in clients])
     else:
-        print("No active user clients. Control bot can still manage accounts.")
-    if control_bot:
-        tasks.append(control_bot)
+        print("No active user clients. Launching frontend.py to manage accounts...")
+        import frontend
+        frontend.main()
+        return
     if tasks:
         await asyncio.gather(*tasks)
 
