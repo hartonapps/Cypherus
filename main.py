@@ -1476,6 +1476,17 @@ async def start_control_bot() -> asyncio.Task | None:
 
     MENU_KEYS = [["➕ Add Account (Phone)", "➕ Add Account (Session)"], ["📋 List Accounts", "✅ Enable Account"], ["⛔ Disable Account", "🗑 Delete Account"], ["❌ Cancel", "🏠 Menu"], ["🔓 Unlink Token"]]
 
+    async def clear_pending_phone(chat_id: int):
+        st = pending_phone.pop(chat_id, None)
+        if not st:
+            return
+        temp = st.get("temp")
+        if temp:
+            try:
+                await temp.disconnect()
+            except Exception:
+                pass
+
     async def send_msg(client: httpx.AsyncClient, chat_id: int, text: str, menu: bool = False):
         payload = {"chat_id": chat_id, "text": text}
         if menu:
@@ -1525,12 +1536,13 @@ async def start_control_bot() -> asyncio.Task | None:
 
                         if text == "❌ Cancel":
                             pending_add.pop(chat_id, None)
-                            pending_phone.pop(chat_id, None)
+                            await clear_pending_phone(chat_id)
                             pending_action.pop(chat_id, None)
                             await send_msg(client, chat_id, "Cancelled.", menu=True)
                             continue
 
                         if text in {"➕ Add Account (Phone)", "/add_account_phone"}:
+                            await clear_pending_phone(chat_id)
                             pending_phone[chat_id] = {"step": "label"}
                             pending_add.pop(chat_id, None)
                             pending_action.pop(chat_id, None)
@@ -1539,7 +1551,7 @@ async def start_control_bot() -> asyncio.Task | None:
 
                         if text in {"➕ Add Account (Session)", "/add_account"}:
                             pending_add[chat_id] = {"step": "label"}
-                            pending_phone.pop(chat_id, None)
+                            await clear_pending_phone(chat_id)
                             pending_action.pop(chat_id, None)
                             await send_msg(client, chat_id, "Session wizard 1/4: send account label")
                             continue
@@ -1630,7 +1642,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"Add failed: {exc}")
                                 pending_add.pop(chat_id, None)
-                            pending_phone.pop(chat_id, None)
+                            await clear_pending_phone(chat_id)
                             continue
 
 
@@ -1656,6 +1668,12 @@ async def start_control_bot() -> asyncio.Task | None:
                                 st["phone"] = text
                                 temp = None
                                 try:
+                                    old_temp = st.get("temp")
+                                    if old_temp:
+                                        try:
+                                            await old_temp.disconnect()
+                                        except Exception:
+                                            pass
                                     try:
                                         await send_msg(client, chat_id, "Requesting login code... please wait.")
                                     except Exception:
@@ -1711,7 +1729,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                     })
                                     await send_msg(client, chat_id, f"Added account by phone: {st['label']} (restart to activate)", menu=True)
                                     await temp.disconnect()
-                                    pending_phone.pop(chat_id, None)
+                                    await clear_pending_phone(chat_id)
                                 except errors.SessionPasswordNeededError:
                                     st["step"] = "password"
                                     await send_msg(client, chat_id, "Phone wizard 6/6: send 2FA password")
@@ -1745,7 +1763,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                     continue
                                 except Exception as exc:
                                     await send_msg(client, chat_id, f"2FA failed: {exc}")
-                                pending_phone.pop(chat_id, None)
+                                await clear_pending_phone(chat_id)
                             continue
 
                 except Exception:
