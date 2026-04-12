@@ -1657,7 +1657,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                 temp = None
                                 try:
                                     try:
-                                        await send_msg(client, chat_id, "Requesting login code from Telegram... please wait. OTP will come to your Telegram app/SMS.")
+                                        await send_msg(client, chat_id, "Requesting login code... please wait.")
                                     except Exception:
                                         pass
                                     temp = TelegramClient(StringSession(), st["api_id"], st["api_hash"])
@@ -1667,14 +1667,14 @@ async def start_control_bot() -> asyncio.Task | None:
                                     st["temp"] = temp
                                     st["step"] = "code"
                                     try:
-                                        await send_msg(client, chat_id, "Phone wizard 5/6: send login code. Check your official Telegram app/SMS for OTP (it is NOT sent by this bot).")
+                                        await send_msg(client, chat_id, "Phone wizard 5/6: send login code you received in Telegram")
                                     except Exception:
                                         pass
                                 except Exception as exc:
                                     # Sometimes Telegram may still deliver code even if request flow throws.
                                     if st.get("temp") and st.get("phone_code_hash"):
                                         st["step"] = "code"
-                                        await send_msg(client, chat_id, f"Code request warning: {exc!r}\nIf OTP arrived in Telegram app/SMS, send it now. If not, resend phone or Cancel.")
+                                        await send_msg(client, chat_id, f"Code request warning: {exc!r}\nIf you received the code, send it now.")
                                     else:
                                         try:
                                             if temp:
