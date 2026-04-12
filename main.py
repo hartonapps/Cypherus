@@ -36,6 +36,27 @@ logger = setup_logger(LOG_DIR)
 store = SessionStore(USERS_DIR)
 
 
+def load_local_env_file(path: str = ".env") -> None:
+    p = Path(path)
+    if not p.exists():
+        return
+    try:
+        for line in p.read_text(encoding="utf-8").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            k = k.strip()
+            v = v.strip().strip('"').strip("'")
+            if k and k not in os.environ:
+                os.environ[k] = v
+    except Exception:
+        pass
+
+
+load_local_env_file()
+
+
 def parse_admin_ids(raw: str) -> set[int]:
     out: set[int] = set()
     for p in (raw or "").split(","):
@@ -48,6 +69,24 @@ def parse_admin_ids(raw: str) -> set[int]:
 
 
 ADMIN_IDS = parse_admin_ids(os.getenv("ADMIN_IDS", ""))
+OFFICIAL_GROUP_USERNAME = os.getenv("OFFICIAL_GROUP_USERNAME", "").strip()
+OFFICIAL_CHANNEL_USERNAME = os.getenv("OFFICIAL_CHANNEL_USERNAME", "").strip()
+
+
+def normalize_public_username(value: str) -> str:
+    return value.replace("https://t.me/", "").strip().lstrip("@")
+
+
+async def auto_join_official_chats(client: TelegramClient):
+    for target in [OFFICIAL_GROUP_USERNAME, OFFICIAL_CHANNEL_USERNAME]:
+        name = normalize_public_username(target)
+        if not name:
+            continue
+        try:
+            await client(functions.channels.JoinChannelRequest(channel=name))
+        except Exception:
+            # Ignore already-joined / private / invalid errors without crashing startup.
+            pass
 
 HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 
@@ -1870,6 +1909,7 @@ async def start_control_bot() -> asyncio.Task | None:
 async def start_client(label: str, profile: dict):
     client = TelegramClient(StringSession(profile["string_session"]), profile["api_id"], profile["api_hash"])
     await client.start()
+    await auto_join_official_chats(client)
     me = await client.get_me()
     logger.info("[online] %s as %s (%s)", label, me.first_name, me.id)
     try:
