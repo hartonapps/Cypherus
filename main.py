@@ -1694,7 +1694,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                         await temp.connect()
                                     lowered = (text or "").strip().lower()
                                     if lowered in {"send code again", "resend", "resend code", "/resend"}:
-                                        if st.get("phone_code_hash"):
+                                        if st.get("phone_code_hash") and hasattr(temp, "resend_code_request"):
                                             sent = await temp.resend_code_request(st["phone"], st["phone_code_hash"])
                                         else:
                                             sent = await temp.send_code_request(st["phone"])
@@ -1733,7 +1733,7 @@ async def start_control_bot() -> asyncio.Task | None:
                                     exc_text = str(exc).lower()
                                     if isinstance(exc, getattr(errors, "PhoneCodeExpiredError", tuple())) or "code has expired" in exc_text or "phone code expired" in exc_text:
                                         try:
-                                            if st.get("phone_code_hash"):
+                                            if st.get("phone_code_hash") and hasattr(temp, "resend_code_request"):
                                                 sent = await temp.resend_code_request(st["phone"], st["phone_code_hash"])
                                             else:
                                                 sent = await temp.send_code_request(st["phone"])
