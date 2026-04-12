@@ -1772,7 +1772,7 @@ async def main():
     if not labels:
         print("No user accounts found yet. Launching frontend.py...")
         import frontend
-        frontend.main()
+        await asyncio.to_thread(frontend.main)
         return
     clients = []
     for label in labels:
@@ -1790,7 +1790,7 @@ async def main():
     else:
         print("No active user clients. Launching frontend.py to manage accounts...")
         import frontend
-        frontend.main()
+        await asyncio.to_thread(frontend.main)
         return
     if tasks:
         await asyncio.gather(*tasks)

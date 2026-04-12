@@ -13,13 +13,27 @@ from utils.session_store import SessionStore
 
 async def create_account(store: SessionStore) -> None:
     label = input("Choose local username label (e.g., mymain): ").strip()
-    api_id = int(input("Telegram API ID: ").strip())
-    api_hash = getpass("Telegram API Hash: ").strip()
+    if not label:
+        print("Label cannot be empty.")
+        return
+    api_id_raw = input("Telegram API ID: ").strip()
+    if not api_id_raw.isdigit():
+        print("API ID must be an integer.")
+        return
+    api_id = int(api_id_raw)
+    api_hash = (getpass("Telegram API Hash: ") or "").strip()
+    if not api_hash:
+        print("API Hash cannot be empty.")
+        return
 
     client = TelegramClient(StringSession(), api_id, api_hash)
     await client.connect()
     if not await client.is_user_authorized():
-        phone = input("Phone number with country code (e.g., +123...): ").strip()
+        phone = (input("Phone number with country code (e.g., +123...): ") or "").strip()
+        if not phone:
+            print("Phone number cannot be empty.")
+            await client.disconnect()
+            return
         await client.send_code_request(phone)
         code = input("Enter login code: ").strip()
         try:
