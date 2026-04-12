@@ -1726,7 +1726,8 @@ async def start_control_bot() -> asyncio.Task | None:
                                     st["step"] = "password"
                                     await send_msg(client, chat_id, "Phone wizard 6/6: send 2FA password")
                                 except Exception as exc:
-                                    if isinstance(exc, (errors.PhoneCodeExpiredError, errors.PhoneCodeHashExpiredError)):
+                                    exc_text = str(exc).lower()
+                                    if isinstance(exc, errors.PhoneCodeExpiredError) or "code has expired" in exc_text or "phone code expired" in exc_text:
                                         try:
                                             if st.get("phone_code_hash"):
                                                 sent = await temp.resend_code_request(st["phone"], st["phone_code_hash"])
@@ -1738,6 +1739,14 @@ async def start_control_bot() -> asyncio.Task | None:
                                             await send_msg(client, chat_id, f"Code expired and auto-resend failed: {resend_exc}\nSend phone number again (with +countrycode) or press Cancel.")
                                             st["step"] = "phone"
                                             continue
+                                    elif "previously shared" in exc_text or "sign in was not allowed" in exc_text:
+                                        await send_msg(
+                                            client,
+                                            chat_id,
+                                            "Telegram blocked this OTP for security (code was previously shared/used).\n"
+                                            "Please request a brand-new code from Telegram and send it here.\n"
+                                            "Type 'resend' now or press Cancel to restart."
+                                        )
                                     elif isinstance(exc, errors.PhoneCodeInvalidError):
                                         await send_msg(client, chat_id, "Invalid OTP. Please send the latest code from your Telegram app/SMS.\nIf needed, type 'resend' for a new code or press Cancel.")
                                     else:
