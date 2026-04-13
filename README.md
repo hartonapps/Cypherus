@@ -11,13 +11,16 @@ A **multi-user Telegram userbot platform** built with **Telethon** that supports
 
 > ⚠️ Important: Userbots can violate Telegram Terms in some contexts. Use responsibly and only on accounts/chats you control.
 
+
+
 ## Termux Installation
 
 ```bash
 pkg update -y && pkg upgrade -y
-pkg install -y python ffmpeg libjpeg-turbo
+pkg install -y python git ffmpeg libjpeg-turbo
+git clone https://github.com/hartonapps/Cypherus.git
+cd Cypherus
 python -m pip install --upgrade pip wheel
-# lightweight requirements (no cryptography/pillow)
 pip install -r requirements.txt
 ```
 
