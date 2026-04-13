@@ -17,9 +17,17 @@ A **multi-user Telegram userbot platform** built with **Telethon** that supports
 
 ```bash
 pkg update -y && pkg upgrade -y
+```
+```bash
 pkg install -y python git ffmpeg libjpeg-turbo
+```
+```bash
 git clone https://github.com/hartonapps/Cypherus.git
+```
+```bash
 cd Cypherus
+```
+```bash
 python -m pip install --upgrade pip wheel
 pip install -r requirements.txt
 ```
