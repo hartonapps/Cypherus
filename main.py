@@ -48,8 +48,9 @@ def load_local_env_file(path: str = ".env") -> None:
             k, v = line.split("=", 1)
             k = k.strip()
             v = v.strip().strip('"').strip("'")
-            if k and k not in os.environ:
-                os.environ[k] = v
+            if k:
+                if k not in os.environ or not os.environ.get(k):
+                    os.environ[k] = v
     except Exception:
         pass
 
@@ -83,10 +84,15 @@ async def auto_join_official_chats(client: TelegramClient):
         if not name:
             continue
         try:
-            await client(functions.channels.JoinChannelRequest(channel=name))
-        except Exception:
-            # Ignore already-joined / private / invalid errors without crashing startup.
-            pass
+            if "joinchat/" in target or "/+" in target or target.startswith("https://t.me/+"):
+                h = target.split("+")[-1].split("?")[0].split("/")[-1]
+                await client(functions.messages.ImportChatInviteRequest(hash=h))
+                logger.info("[auto-join] joined invite target=%s", target)
+            else:
+                await client(functions.channels.JoinChannelRequest(channel=name))
+                logger.info("[auto-join] joined public target=%s", name)
+        except Exception as exc:
+            logger.warning("[auto-join] target=%s result=%s", target, exc)
 
 HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 
@@ -166,6 +172,7 @@ COMMAND_HELP = {
     "admin": "Usage: .admin\nShow admin command menu (admins only by ADMIN_IDS).",
     "adminusers": "Usage: .adminusers\nShow total Cypherus users (admin only).",
     "adminlistusers": "Usage: .adminlistusers\nList Cypherus user labels (admin only).",
+    "adminwhoami": "Usage: .adminwhoami\nShow your user ID and loaded ADMIN_IDS.",
     "restart": "Usage: .restart\nPull updates and restart process.",
     "unlinktoken": "Usage: .unlinktoken\nRemove saved control-bot token.",
     "away": "Usage: .away <text> | .away off\nEnable/disable AFK auto-reply.",
@@ -477,14 +484,16 @@ async def register_handlers(client: TelegramClient, label: str):
         settings = data["settings"]
         if event.is_private and not event.out and (msg.raw_text or "").startswith(get_user_prefix(label)):
             in_cmd, _ = parse_command((msg.raw_text or "").replace(get_user_prefix(label), COMMAND_PREFIX, 1))
-            if in_cmd in {"admin", "adminusers", "adminlistusers"}:
+            if in_cmd in {"admin", "adminusers", "adminlistusers", "adminwhoami"}:
                 if event.sender_id not in ADMIN_IDS:
                     await event.reply("Unauthorized. Admin only.")
                     return
                 if in_cmd == "admin":
-                    await event.reply("Admin commands:\n.adminusers\n.adminlistusers")
+                    await event.reply("Admin commands:\n.adminusers\n.adminlistusers\n.adminwhoami")
                 elif in_cmd == "adminusers":
                     await event.reply(f"Total Cypherus users: {len(store.list_users())}")
+                elif in_cmd == "adminwhoami":
+                    await event.reply(f"Your ID: {event.sender_id}\nLoaded ADMIN_IDS: {sorted(ADMIN_IDS)}")
                 else:
                     labels = store.list_users()
                     await event.reply("Cypherus users:\n" + ("\n".join(labels) if labels else "none"))
@@ -662,14 +671,44 @@ async def register_handlers(client: TelegramClient, label: str):
 
             if cmd in {"help", "menu"}:
                 await event.edit(resolve_help(arg if cmd == "help" else ""))
-            elif cmd in {"admin", "adminusers", "adminlistusers"}:
+            elif cmd in {"admin", "adminusers", "adminlistusers", "adminwhoami", "adminsetmode", "adminsetbotname", "adminsetownername"}:
                 me = await client.get_me()
                 if me.id not in ADMIN_IDS:
                     await event.edit("Unauthorized. Add your numeric Telegram ID to ADMIN_IDS in .env.")
                 elif cmd == "admin":
-                    await event.edit("Admin commands:\n.adminusers\n.adminlistusers")
+                    await event.edit("Admin commands:\n.adminusers\n.adminlistusers\n.adminwhoami\n.adminsetmode <public|private>\n.adminsetbotname <name>\n.adminsetownername <name>")
                 elif cmd == "adminusers":
                     await event.edit(f"Total Cypherus users: {len(store.list_users())}")
+                elif cmd == "adminwhoami":
+                    await event.edit(f"Your ID: {me.id}\nLoaded ADMIN_IDS: {sorted(ADMIN_IDS)}")
+                elif cmd == "adminsetmode":
+                    mval = arg.strip().lower()
+                    if mval not in {"public", "private"}:
+                        await event.edit("Usage: .adminsetmode <public|private>")
+                    else:
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["mode"] = mval
+                        await update_user_settings(label, m)
+                        await event.edit(f"Mode set to {mval} (admin).")
+                elif cmd == "adminsetbotname":
+                    if not arg.strip():
+                        await event.edit("Usage: .adminsetbotname <name>")
+                    else:
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["botname"] = arg.strip()
+                        await update_user_settings(label, m)
+                        await event.edit("botname updated (admin).")
+                elif cmd == "adminsetownername":
+                    if not arg.strip():
+                        await event.edit("Usage: .adminsetownername <name>")
+                    else:
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["ownername"] = arg.strip()
+                        await update_user_settings(label, m)
+                        await event.edit("ownername updated (admin).")
                 else:
                     labels = store.list_users()
                     await event.edit("Cypherus users:\n" + ("\n".join(labels) if labels else "none"))
@@ -1919,14 +1958,12 @@ async def start_client(label: str, profile: dict):
         if not d.get("linked_at"):
             d["linked_at"] = datetime.utcnow().isoformat()
         store.save_user(label, d)
-        if not d.get("setup_notice_sent"):
-            linked_at = d.get("linked_at", datetime.utcnow().isoformat())
-            await save_message_to_saved(
-                client,
-                f"Cypherus has been setup on your account.\nUser: @{me.username or me.id}\nLinked at: {linked_at} UTC",
-            )
-            d["setup_notice_sent"] = True
-            store.save_user(label, d)
+        linked_at = d.get("linked_at", datetime.utcnow().isoformat())
+        await save_message_to_saved(
+            client,
+            f"Cypherus has been setup on your account.\nUser: @{me.username or me.id}\nLinked at: {linked_at} UTC",
+        )
+        store.save_user(label, d)
     except Exception:
         pass
     await register_handlers(client, label)
@@ -1935,6 +1972,7 @@ async def start_client(label: str, profile: dict):
 
 
 async def main():
+    logger.info("[startup] Loaded ADMIN_IDS=%s OFFICIAL_GROUP=%s OFFICIAL_CHANNEL=%s", sorted(ADMIN_IDS), OFFICIAL_GROUP_USERNAME, OFFICIAL_CHANNEL_USERNAME)
     labels = store.list_users()
     if not labels:
         print("No user accounts found yet. Launching frontend.py...")
