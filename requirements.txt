@@ -1,0 +1,4 @@
+telethon==1.40.0
+httpx==0.28.1
+yt-dlp
+SpeechRecognition==3.14.3
