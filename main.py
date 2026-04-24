@@ -233,6 +233,23 @@ COMMAND_HELP = {
     "savestatus": "Usage: reply media/text + .savestatus\nSave replied status/media to Saved Messages.",
     "urlinfo": "Usage: .urlinfo <url>\nFetch page metadata (title + status) safely.",
     "expand": "Usage: .expand <short_url>\nResolve final redirected URL.",
+    "reactsave": "Usage: .reactsave on|off\nAlias of autosave-like behavior.",
+    "bookmark": "Usage: reply + .bookmark <tag>\nSave replied message under a tag.",
+    "forwarddm": "Usage: .forwarddm on|off\nAuto-forward messages from this chat to Saved Messages.",
+    "gitclone": "Usage: .gitclone <repo_url>\nClone Git repo into downloads folder.",
+    "image": "Usage: .image <query>\nFetch and send a related image.",
+    "tomp3": "Usage: reply audio/video + .tomp3\nConvert replied media to MP3.",
+    "toaudio": "Usage: reply video + .toaudio\nExtract audio as MP3.",
+    "totalmembers": "Usage: .totalmembers\nShow participant count in current group.",
+    "setbio": "Usage: .setbio <text>\nAlias of setstatus.",
+    "setprofilepic": "Usage: .setprofilepic (reply/image_url)\nAlias of setpp.",
+    "chatbot": "Usage: .chatbot on|off\nToggle smart AI auto replies.",
+    "settimezone": "Usage: .settimezone <Area/City>\nSet preferred timezone label.",
+    "antidelete": "Usage: .antidelete on|off\nAlias of .anti-delete.",
+    "antiedit": "Usage: .antiedit on|off\nAlias of .anti-edit.",
+    "readreceipts": "Usage: .readreceipts on|off\nAlias of .autoread.",
+    "story": "Usage: .story <prompt>\nGenerate a story with AI.",
+    "analyze": "Usage: .analyze <text>\nAnalyze text with AI.",
     "save": "Usage: reply message + .save <name>\nSave message reference by key.",
     "get": "Usage: .get <name>\nRecall saved message by key.",
     "list": "Usage: .list\nList saved keys.",
@@ -404,6 +421,9 @@ def ensure_settings(data: dict):
     s.setdefault("notes", {})
     s.setdefault("todo", [])
     s.setdefault("autosave_like", False)
+    s.setdefault("forwarddm_chat", "")
+    s.setdefault("bookmarks", {})
+    s.setdefault("timezone", "UTC")
     s.setdefault("aza_profile", {
         "account_number": "8067871926",
         "bank_name": "Palmpay",
@@ -550,6 +570,11 @@ async def register_handlers(client: TelegramClient, label: str):
             "has_media": bool(msg.media),
             "date": str(msg.date),
         }
+        if settings.get("forwarddm_chat") and str(event.chat_id) == str(settings.get("forwarddm_chat")) and not event.out:
+            try:
+                await client.forward_messages("me", msg.id, from_peer=event.chat_id)
+            except Exception:
+                pass
 
         if settings.get("vvwatch", True):
             await save_media_if_needed(client, msg, label)
@@ -1515,6 +1540,35 @@ async def register_handlers(client: TelegramClient, label: str):
                     except Exception as exc:
                         await event.edit(f"setstatus failed: {exc}")
 
+            elif cmd == "setbio":
+                if not arg.strip():
+                    await event.edit("Usage: .setbio <text>")
+                else:
+                    try:
+                        await client(functions.account.UpdateProfileRequest(about=arg.strip()[:70]))
+                        await event.edit("Bio updated.")
+                    except Exception as exc:
+                        await event.edit(f"setbio failed: {exc}")
+
+            elif cmd == "setprofilepic":
+                reply = await event.get_reply_message() if event.is_reply else None
+                alias_arg = arg.strip()
+                try:
+                    if reply and reply.media:
+                        tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                        src = await reply.download_media(file=tmp / "setprofilepic_src")
+                        await client(functions.photos.UploadProfilePhotoRequest(file=await client.upload_file(src)))
+                        await event.edit("Profile photo updated.")
+                    elif alias_arg.startswith("http"):
+                        async with httpx.AsyncClient(timeout=40) as x:
+                            r = await x.get(alias_arg); r.raise_for_status()
+                            await client(functions.photos.UploadProfilePhotoRequest(file=await client.upload_file(r.content)))
+                        await event.edit("Profile photo updated from URL.")
+                    else:
+                        await event.edit("Usage: reply image + .setprofilepic OR .setprofilepic <image_url>")
+                except Exception as exc:
+                    await event.edit(f"setprofilepic failed: {exc}")
+
             elif cmd == "silentmsg":
                 if not arg.strip():
                     await event.edit("Usage: .silentmsg <text>")
@@ -1618,6 +1672,17 @@ async def register_handlers(client: TelegramClient, label: str):
                     await update_user_settings(label, m)
                     await event.edit(f"autosave {st}")
 
+            elif cmd == "reactsave":
+                st = arg.strip().lower()
+                if st not in {"on", "off"}:
+                    await event.edit("Usage: .reactsave on|off")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["autosave_like"] = st == "on"
+                    await update_user_settings(label, m)
+                    await event.edit(f"reactsave {st}")
+
             elif cmd == "like":
                 reply = await event.get_reply_message()
                 if not reply:
@@ -1628,6 +1693,29 @@ async def register_handlers(client: TelegramClient, label: str):
                         await event.edit("Saved to Saved Messages ❤️")
                     except Exception as exc:
                         await event.edit(f"like save failed: {exc}")
+
+            elif cmd == "bookmark":
+                reply = await event.get_reply_message()
+                tag = arg.strip().lower()
+                if not reply or not tag:
+                    await event.edit("Usage: reply + .bookmark <tag>")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"].setdefault("bookmarks", {})[tag] = {"chat": event.chat_id, "msg_id": reply.id}
+                    await update_user_settings(label, m)
+                    await event.edit(f"Bookmarked as: {tag}")
+
+            elif cmd == "forwarddm":
+                st = arg.strip().lower()
+                if st not in {"on", "off"}:
+                    await event.edit("Usage: .forwarddm on|off")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["forwarddm_chat"] = str(event.chat_id) if st == "on" else ""
+                    await update_user_settings(label, m)
+                    await event.edit(f"forwarddm {st}")
 
             elif cmd == "markread":
                 await client.send_read_acknowledge(event.chat_id)
@@ -1677,6 +1765,102 @@ async def register_handlers(client: TelegramClient, label: str):
                             await event.edit(str(r.url))
                     except Exception as exc:
                         await event.edit(f"expand failed: {exc}")
+
+            elif cmd == "gitclone":
+                if not arg.strip():
+                    await event.edit("Usage: .gitclone <repo_url>")
+                else:
+                    import subprocess
+                    dst = MEDIA_DIR / label / "git"
+                    dst.mkdir(parents=True, exist_ok=True)
+                    await event.edit("Cloning repository...")
+                    p = await asyncio.to_thread(subprocess.run, ["git", "clone", arg.strip()], cwd=str(dst), capture_output=True, text=True)
+                    out = (p.stdout or p.stderr or "").strip()
+                    await event.edit((f"git clone exit={p.returncode}\n{out[-3000:]}")[:3900])
+
+            elif cmd == "image":
+                if not arg.strip():
+                    await event.edit("Usage: .image <query>")
+                else:
+                    url = f"https://source.unsplash.com/featured/?{arg.strip().replace(' ',',')}"
+                    try:
+                        await client.send_file(event.chat_id, url, caption=f"Image result: {arg.strip()}")
+                        await event.delete()
+                    except Exception as exc:
+                        await event.edit(f"image failed: {exc}")
+
+            elif cmd in {"tomp3", "toaudio"}:
+                reply = await event.get_reply_message()
+                if not reply or not reply.media:
+                    await event.edit(f"Reply media + .{cmd}")
+                else:
+                    tmp = MEDIA_DIR / label / "tmp"; tmp.mkdir(parents=True, exist_ok=True)
+                    src = Path(await reply.download_media(file=tmp / f"{cmd}_src"))
+                    out = tmp / f"{src.stem}.mp3"
+                    import subprocess
+                    await asyncio.to_thread(subprocess.run, ["ffmpeg", "-y", "-i", str(src), str(out)], check=True)
+                    await client.send_file(event.chat_id, out)
+                    await event.delete()
+
+            elif cmd == "totalmembers":
+                if not event.is_group:
+                    await event.edit("Group only")
+                else:
+                    count = await client.get_participants(event.chat_id, limit=0)
+                    await event.edit(f"Total members: {len(count)}")
+
+            elif cmd == "chatbot":
+                st = arg.strip().lower()
+                if st not in {"on", "off"}:
+                    await event.edit("Usage: .chatbot on|off")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["smart_ai"] = st == "on"
+                    await update_user_settings(label, m)
+                    await event.edit(f"chatbot {st}")
+
+            elif cmd == "settimezone":
+                if not arg.strip():
+                    await event.edit("Usage: .settimezone <Area/City>")
+                else:
+                    def m(d):
+                        ensure_settings(d)
+                        d["settings"]["timezone"] = arg.strip()
+                    await update_user_settings(label, m)
+                    await event.edit(f"timezone set: {arg.strip()}")
+
+            elif cmd in {"antidelete", "antiedit", "readreceipts"}:
+                mapped = {"antidelete": "anti-delete", "antiedit": "anti-edit", "readreceipts": "autoread"}[cmd]
+                if mapped == "autoread":
+                    st = arg.strip().lower()
+                    if st not in {"on", "off"}:
+                        await event.edit("Usage: .readreceipts on|off")
+                    else:
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["autoread"] = st == "on"
+                        await update_user_settings(label, m)
+                        await event.edit(f"readreceipts {st}")
+                else:
+                    state = arg.strip().lower()
+                    if state not in {"on", "off"}:
+                        await event.edit(f"Usage: .{cmd} on|off")
+                    else:
+                        key = mapped.replace("-", "_")
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"][key] = state == "on"
+                        await update_user_settings(label, m)
+                        await event.edit(f"{cmd} {state}")
+
+            elif cmd in {"story", "analyze"}:
+                if not arg.strip():
+                    await event.edit(f"Usage: .{cmd} <text>")
+                else:
+                    prompt = f"{'Write a creative story' if cmd == 'story' else 'Analyze deeply'}: {arg.strip()}"
+                    out = await ask_free_ai(prompt, "default", [])
+                    await event.edit(out[:3900])
 
             elif cmd == "setpin":
                 pin = arg.strip()
