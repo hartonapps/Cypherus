@@ -13,7 +13,7 @@ from pathlib import Path
 
 import httpx
 import edge_tts
-from telethon import TelegramClient, events, functions, types, errors
+from telethon import TelegramClient, events, functions, types, errors, utils
 from telethon.sessions import StringSession
 
 from config import (
@@ -201,7 +201,7 @@ COMMAND_HELP = {
     "keyword": "Usage: .keyword add|list|remove <word> [response]\nManage keyword auto-replies. This uses the same filter storage as .filter.",
     "vvwatch": "Usage: .vvwatch on|off\nAuto-monitor expiring/view-once media.",
     "vvsave": "Usage: reply media + .vvsave\nForce save replied media to Saved Messages.",
-    "anti-delete": "Usage: .anti-delete on|off\nRecover deleted message text from cache.",
+    "anti-delete": "Usage: .anti-delete on|off [@chat|thischat]\nRecover deleted message text from cache globally, or disable it for one chat.",
     "anti-edit": "Usage: .anti-edit on|off\nLog old/new message text on edits.",
     "gpt": "Usage: .gpt <text>\nAsk AI with current persona + memory.",
     "ask": "Usage: .ask <text>\nAlias of .gpt.",
@@ -349,6 +349,24 @@ def parse_command(text: str) -> tuple[str, str]:
         return "", ""
     parts = raw.split(maxsplit=1)
     return parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+
+
+def is_anti_delete_enabled_for_chat(settings: dict, chat_id: int | str) -> bool:
+    if not settings.get("anti_delete", False):
+        return False
+    disabled = {str(x) for x in settings.get("anti_delete_disabled_chats", [])}
+    return str(chat_id) not in disabled
+
+
+async def resolve_chat_target_id(client: TelegramClient, event, target: str) -> int | None:
+    raw = (target or "").strip()
+    if not raw or raw.lower() in {"thischat", "this chat", "current", "here", "@thischat"}:
+        return int(event.chat_id)
+    try:
+        entity = await client.get_input_entity(raw)
+        return int(utils.get_peer_id(entity))
+    except Exception:
+        return None
 
 
 REMOVED_COMMANDS = {
@@ -762,6 +780,7 @@ def ensure_settings(data: dict):
     s.setdefault("away", {"enabled": False, "text": "I'm busy, I'll reply later."})
     s.setdefault("filters", {})
     s.setdefault("anti_delete", False)
+    s.setdefault("anti_delete_disabled_chats", [])
     s.setdefault("anti_edit", False)
     s.setdefault("vvwatch", True)
     s.setdefault("warns", {})
@@ -912,6 +931,7 @@ async def story_auto_worker(client: TelegramClient, label: str):
 async def register_handlers(client: TelegramClient, label: str):
     anti_spam_map: dict[int, deque[float]] = defaultdict(deque)
     msg_cache: dict[tuple[int, int], dict] = {}
+    private_msg_cache: dict[int, dict] = {}
 
     async def run_public_command(event, cmd: str, arg: str):
         """Run commands sent by allow-listed public users without echoing their text."""
@@ -1025,6 +1045,14 @@ async def register_handlers(client: TelegramClient, label: str):
             "has_media": bool(msg.media),
             "date": str(msg.date),
         }
+        if event.is_private:
+            private_msg_cache[msg.id] = {
+                "chat_id": int(event.chat_id),
+                "text": msg.raw_text or "",
+                "from": event.sender_id,
+                "has_media": bool(msg.media),
+                "date": str(msg.date),
+            }
         if settings.get("forwarddm_chat") and str(event.chat_id) == str(settings.get("forwarddm_chat")) and not event.out:
             try:
                 await client.forward_messages("me", msg.id, from_peer=event.chat_id)
@@ -1124,7 +1152,10 @@ async def register_handlers(client: TelegramClient, label: str):
     async def on_deleted(event):
         data = store.load_user(label)
         ensure_settings(data)
-        if not data["settings"].get("anti_delete", False):
+        settings = data["settings"]
+        if not settings.get("anti_delete", False):
+            return
+        if not is_anti_delete_enabled_for_chat(settings, event.chat_id):
             return
         for msg_id in event.deleted_ids:
             key = (event.chat_id, msg_id)
@@ -1132,6 +1163,26 @@ async def register_handlers(client: TelegramClient, label: str):
             if cached:
                 txt = f"🧹 Deleted message\nchat:{event.chat_id}\nfrom:{cached['from']}\ntext:{cached['text']}"
                 await save_message_to_saved(client, txt)
+
+    @client.on(events.Raw(types.UpdateDeleteMessages))
+    async def on_private_deleted(update):
+        data = store.load_user(label)
+        ensure_settings(data)
+        settings = data["settings"]
+        if not settings.get("anti_delete", False):
+            return
+        deleted_ids = list(getattr(update, "messages", []) or [])
+        if not deleted_ids:
+            return
+        for msg_id in deleted_ids:
+            cached = private_msg_cache.get(msg_id)
+            if not cached:
+                continue
+            chat_id = cached.get("chat_id")
+            if not is_anti_delete_enabled_for_chat(settings, chat_id):
+                continue
+            txt = f"🧹 Deleted message\nchat:{chat_id}\nfrom:{cached['from']}\ntext:{cached['text']}"
+            await save_message_to_saved(client, txt)
 
     @client.on(events.MessageEdited(incoming=True))
     async def on_edited(event):
@@ -1821,7 +1872,43 @@ async def register_handlers(client: TelegramClient, label: str):
                     else:
                         await event.edit("Usage: .keyword add|list|remove <word> [response]")
 
-            elif cmd in {"anti-delete", "anti-edit", "vvwatch", "antispam", "autostoryview", "autostoryreact"}:
+            elif cmd == "anti-delete":
+                raw = arg.strip()
+                if not raw:
+                    await event.edit("Usage: .anti-delete on|off [@chat|thischat]")
+                else:
+                    parts = raw.split(maxsplit=1)
+                    state = parts[0].lower()
+                    target = parts[1].strip() if len(parts) > 1 else ""
+                    if state not in {"on", "off"}:
+                        await event.edit("Usage: .anti-delete on|off [@chat|thischat]")
+                    elif target:
+                        chat_id = await resolve_chat_target_id(client, event, target)
+                        if chat_id is None:
+                            await event.edit("Could not resolve chat target.")
+                        else:
+                            def m(d):
+                                ensure_settings(d)
+                                disabled = d["settings"].setdefault("anti_delete_disabled_chats", [])
+                                sid = str(chat_id)
+                                if state == "off":
+                                    if sid not in {str(x) for x in disabled}:
+                                        disabled.append(chat_id)
+                                else:
+                                    d["settings"]["anti_delete_disabled_chats"] = [x for x in disabled if str(x) != sid]
+                            await update_user_settings(label, m)
+                            if state == "off":
+                                await event.edit("Anti-delete disabled for that chat.")
+                            else:
+                                await event.edit("Anti-delete re-enabled for that chat.")
+                    else:
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["anti_delete"] = state == "on"
+                        await update_user_settings(label, m)
+                        await event.edit(f"anti-delete {state}")
+
+            elif cmd in {"anti-edit", "vvwatch", "antispam", "autostoryview", "autostoryreact"}:
                 state = arg.strip().lower()
                 if state not in {"on", "off"}:
                     await event.edit(f"Usage: .{cmd} on|off")
