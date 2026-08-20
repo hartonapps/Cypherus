@@ -101,7 +101,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 **Automation**
 • `.away <text>` / `.away off` → AFK auto-reply
 • `.schedule <10m|HH:MM> <message>` → send later
-• `.filter <word> <response>` → keyword auto-reply
+• `.filter <word> <response>` / `.keyword add <word> <response>` → keyword auto-reply
 
 **Privacy / Logs**
 • `.anti-delete on|off`
@@ -179,7 +179,7 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 • `.lyrics` `.define` `.weather` `.jokes` `.memes` `.quotes`
 • `.setprefix` `.setbotname` `.setownername`
 • `.autoread on|off` `.autotype on|off`
-• `.setwelcome <text>` `.setgoodbye <text>` `.link`
+• `.setwelcome <text>` `.setgoodbye <text>` `.dmwelcome <text>` `.link`
 """
 
 
@@ -192,12 +192,13 @@ COMMAND_HELP = {
     "mode": "Usage: .mode public|private OR .mode @username\nSet default public/private mode. If you pass a username, Cypherus adds that user to the public allow-list.",
     "public": "Usage: .public add|remove|list <@user/id>\nChoose exactly who can use your userbot commands publicly. Allowed users are not limited to only ping/menu/help; their commands are relayed as your outgoing command.",
     "alwaysonline": "Usage: .alwaysonline on|off\nKeep Telegram online status active while Cypherus is running.",
-    "commands": "Usage: .commands\nList all available commands quickly.\nTip: use `.help <command>` after listing to get detailed usage.",
+    "commands": "Usage: .commands\nShow the categorized command menu quickly.\nTip: use `.help <command>` after listing to get detailed usage.",
     "update": "Usage: .update\nInstall requirements, run git pull, write update log, and restart.",
     "unlinktoken": "Usage: .unlinktoken\nRemove saved control-bot token.",
     "away": "Usage: .away <text> | .away off\nEnable/disable AFK auto-reply.",
     "schedule": "Usage: .schedule <10m|HH:MM> <message>\nSend a message later.",
     "filter": "Usage: .filter <word> <response>\nAuto-reply when keyword is detected.",
+    "keyword": "Usage: .keyword add|list|remove <word> [response]\nManage keyword auto-replies. This uses the same filter storage as .filter.",
     "vvwatch": "Usage: .vvwatch on|off\nAuto-monitor expiring/view-once media.",
     "vvsave": "Usage: reply media + .vvsave\nForce save replied media to Saved Messages.",
     "anti-delete": "Usage: .anti-delete on|off\nRecover deleted message text from cache.",
@@ -300,6 +301,7 @@ COMMAND_HELP = {
     "link": "Usage: .link\nGet group invite link.",
     "setwelcome": "Usage: .setwelcome <text>\nSet group welcome message.",
     "setgoodbye": "Usage: .setgoodbye <text>\nSet group goodbye message.",
+    "dmwelcome": "Usage: .dmwelcome <text>|off\nSend a welcome message the first time someone DMs you.",
     "setprefix": "Usage: .setprefix <symbol>\nSet command prefix.",
     "setbotname": "Usage: .setbotname <name>\nSet bot display name setting.",
     "setownername": "Usage: .setownername <name>\nSet owner name setting.",
@@ -422,9 +424,165 @@ REMOVED_COMMANDS = {
 }
 
 
+MENU_CATEGORIES = [
+    ("Core", [
+        "menu",
+        "help",
+        "ping",
+        "profile",
+        "mode",
+        "public",
+        "alwaysonline",
+        "getsettings",
+        "runtime",
+        "version",
+        "update",
+        "commands",
+        "unlinktoken",
+    ]),
+    ("Automation", [
+        "away",
+        "schedule",
+        "filter",
+        "keyword",
+        "autoread",
+        "autotype",
+        "vvwatch",
+        "vvsave",
+        "autostoryview",
+        "autostoryreact",
+    ]),
+    ("Privacy / Safety", [
+        "anti-delete",
+        "anti-edit",
+        "lockchat",
+        "blockword",
+        "setpin",
+        "changepin",
+        "hide",
+        "unhide",
+    ]),
+    ("Workspace / Notes", [
+        "draft",
+        "notes",
+        "todo",
+        "timer",
+        "remind",
+        "save",
+        "get",
+        "list",
+        "bookmark",
+        "clearchat",
+        "markread",
+        "markunread",
+        "pause",
+        "resume",
+        "cooldown",
+    ]),
+    ("Media / Downloads", [
+        "dl",
+        "playlist",
+        "song",
+        "spotify",
+        "meta",
+        "compress",
+        "rename",
+        "speed",
+        "tomp4",
+        "tomp3",
+        "toaudio",
+        "ocr",
+        "transcribe",
+        "setpp",
+        "delpp",
+        "setstatus",
+        "silentmsg",
+        "selfdestruct",
+        "readqr",
+        "meme",
+        "memetext",
+        "ss",
+        "sstab",
+        "sspc",
+        "ssfull",
+        "topdf",
+        "notetopdf",
+        "chatpdf",
+        "qrcode",
+        "tinyurl",
+        "sticker",
+        "toimage",
+        "image",
+        "search",
+        "urlinfo",
+        "expand",
+        "gitclone",
+    ]),
+    ("AI / Text", [
+        "gpt",
+        "ask",
+        "generateimg",
+        "logo",
+        "story",
+        "analyze",
+        "summarize",
+        "translate",
+        "tts",
+        "calc",
+        "define",
+        "weather",
+        "jokes",
+        "memes",
+        "quotes",
+    ]),
+    ("Accounts / Group", [
+        "msg",
+        "decodeid",
+        "iscypherus",
+        "setaza",
+        "aza",
+        "getaza",
+        "resetaza",
+        "link",
+        "join",
+        "leave",
+        "leavesilently",
+        "tagall",
+        "kick",
+        "promote",
+        "demote",
+        "warn",
+        "mute",
+        "pin",
+        "unpin",
+        "totalmembers",
+        "setprefix",
+        "setbotname",
+        "setownername",
+        "settimezone",
+        "chatbot",
+        "backup",
+        "restore",
+        "daily",
+        "rank",
+    ]),
+]
+
+
+def format_menu_command(name: str) -> str:
+    return f"`.{name}`"
+
+
 def build_menu_text() -> str:
-    cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
-    return "**🚀 Cypherus Userbot Menu**\n\nAvailable commands:\n" + "\n".join(f"• .{c}" for c in cmds)
+    lines = ["**🚀 Cypherus Userbot Menu**", "", "Available commands by category:"]
+    for title, commands in MENU_CATEGORIES:
+        visible = [cmd for cmd in commands if cmd not in REMOVED_COMMANDS]
+        if not visible:
+            continue
+        lines.append("")
+        lines.append(f"**{title}**")
+        lines.append(" • " + " ".join(format_menu_command(cmd) for cmd in visible))
+    return "\n".join(lines)
 
 
 async def command_arg_or_reply_text(event, arg: str) -> str:
@@ -623,6 +781,8 @@ def ensure_settings(data: dict):
     s.setdefault("alwaysonline", False)
     s.setdefault("welcome", {})
     s.setdefault("goodbye", {})
+    s.setdefault("dm_welcome", {"enabled": False, "text": ""})
+    s.setdefault("seen_private_senders", {})
     s.setdefault("vault_pin", "")
     s.setdefault("hidden_chats", {})
     s.setdefault("autostory_view", False)
@@ -758,8 +918,7 @@ async def register_handlers(client: TelegramClient, label: str):
         if cmd in {"help", "menu"}:
             await event.reply(resolve_help(arg if cmd == "help" else ""))
         elif cmd == "commands":
-            cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
-            await event.reply("Available commands:\n" + "\n".join(f".{c}" for c in cmds[:180]))
+            await event.reply(build_menu_text())
         elif cmd == "ping":
             t0 = time.perf_counter()
             ms = (time.perf_counter() - t0) * 1000
@@ -886,6 +1045,19 @@ async def register_handlers(client: TelegramClient, label: str):
 
         if settings.get("away", {}).get("enabled") and event.is_private and not event.out:
             await event.reply(settings["away"].get("text") or "I'm busy, I'll reply later.")
+
+        if event.is_private and not event.out:
+            seen_private = settings.setdefault("seen_private_senders", {})
+            sender_key = str(event.sender_id)
+            if sender_key not in seen_private:
+                seen_private[sender_key] = int(time.time())
+                dm_welcome = settings.get("dm_welcome", {})
+                text = (dm_welcome.get("text") or "").strip()
+                if dm_welcome.get("enabled") and text:
+                    try:
+                        await event.reply(text)
+                    except Exception:
+                        pass
 
         for k, v in settings.get("filters", {}).items():
             if k.lower() in (msg.raw_text or "").lower() and not event.out:
@@ -1078,8 +1250,7 @@ async def register_handlers(client: TelegramClient, label: str):
             if cmd in {"help", "menu"}:
                 await event.edit(resolve_help(arg if cmd == "help" else ""))
             elif cmd == "commands":
-                cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
-                await event.edit("Available commands:\n" + "\n".join(f".{c}" for c in cmds[:180]))
+                await event.edit(build_menu_text())
             elif cmd == "profile":
                 d = store.load_user(label); ensure_settings(d)
                 st = d["settings"]
@@ -1334,6 +1505,25 @@ async def register_handlers(client: TelegramClient, label: str):
                     await update_user_settings(label, m)
                     await event.edit("Goodbye message set.")
 
+            elif cmd == "dmwelcome":
+                raw = arg.strip()
+                if not raw:
+                    await event.edit("Usage: .dmwelcome <text>|off")
+                else:
+                    state = raw.lower()
+                    if state == "off":
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["dm_welcome"] = {"enabled": False, "text": ""}
+                        await update_user_settings(label, m)
+                        await event.edit("DM welcome disabled.")
+                    else:
+                        def m(d):
+                            ensure_settings(d)
+                            d["settings"]["dm_welcome"] = {"enabled": True, "text": raw}
+                        await update_user_settings(label, m)
+                        await event.edit("DM welcome message set.")
+
             elif cmd in {"setprefix", "setbotname", "setownername"}:
                 if not arg.strip():
                     await event.edit(f"Usage: .{cmd} <value>")
@@ -1583,6 +1773,53 @@ async def register_handlers(client: TelegramClient, label: str):
                         d["settings"].setdefault("filters", {})[word] = response
                     await update_user_settings(label, m)
                     await event.edit(f"Filter set for: {word}")
+
+            elif cmd == "keyword":
+                parts = arg.split(maxsplit=2)
+                if not parts:
+                    await event.edit("Usage: .keyword add|list|remove <word> [response]")
+                else:
+                    sub = parts[0].lower()
+                    d = store.load_user(label)
+                    ensure_settings(d)
+                    filters = d["settings"].setdefault("filters", {})
+                    if sub in {"list", "show"}:
+                        if filters:
+                            lines = "\n".join(f"{k} -> {v}" for k, v in sorted(filters.items()))
+                            await event.edit("Keyword replies:\n" + lines)
+                        else:
+                            await event.edit("No keyword replies saved yet.")
+                    elif sub in {"add", "set"}:
+                        if len(parts) < 3:
+                            await event.edit("Usage: .keyword add <word> <response>")
+                        else:
+                            word = parts[1].lower()
+                            response = parts[2].strip()
+                            if not response:
+                                await event.edit("Usage: .keyword add <word> <response>")
+                            elif word in filters:
+                                await event.edit(f"Keyword already exists: {word}\nCurrent reply: {filters[word]}")
+                            else:
+                                def m(data):
+                                    ensure_settings(data)
+                                    data["settings"].setdefault("filters", {})[word] = response
+                                await update_user_settings(label, m)
+                                await event.edit(f"Keyword added: {word}")
+                    elif sub in {"remove", "del", "delete"}:
+                        if len(parts) < 2:
+                            await event.edit("Usage: .keyword remove <word>")
+                        else:
+                            word = parts[1].lower()
+                            if word not in filters:
+                                await event.edit(f"Keyword not found: {word}")
+                            else:
+                                def m(data):
+                                    ensure_settings(data)
+                                    data["settings"].setdefault("filters", {}).pop(word, None)
+                                await update_user_settings(label, m)
+                                await event.edit(f"Keyword removed: {word}")
+                    else:
+                        await event.edit("Usage: .keyword add|list|remove <word> [response]")
 
             elif cmd in {"anti-delete", "anti-edit", "vvwatch", "antispam", "autostoryview", "autostoryreact"}:
                 state = arg.strip().lower()
