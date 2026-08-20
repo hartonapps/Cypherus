@@ -248,7 +248,7 @@ COMMAND_HELP = {
     "todo": "Usage: .todo add|list|done <text|index>\nMaintain a lightweight personal todo list.",
     "timer": "Usage: .timer <10s|5m>\nStart a countdown and get notified in chat when it finishes.",
     "remind": "Usage: .remind <10s|HH:MM> <text>\nSchedule a reminder in the current chat.",
-    "autosave": "Usage: .autosave on|off\nEnable automatic save-on-like mode. When ON, any message you react to with ❤️ is forwarded into your Saved Messages so you can keep important content without manual forwarding.",
+    "autosave": "Usage: .autosave on|off\nEnable automatic save-on-like mode. When ON, any message or story you react to with ❤️ is forwarded into your Saved Messages so you can keep important content without manual forwarding.",
     "like": "Usage: reply + .like\nQuick-save replied message to Saved Messages.",
     "clearchat": "Usage: .clearchat <limit>\nDelete your latest N messages in the current chat.",
     "markread": "Usage: .markread\nMark current chat as read immediately.",
@@ -266,8 +266,8 @@ COMMAND_HELP = {
     "savestatus": "Usage: reply media/text + .savestatus\nManually save replied status-like media/text into Saved Messages. Use this when you want explicit control over what gets kept.",
     "urlinfo": "Usage: .urlinfo <url>\nFetch page metadata (title + status) safely.",
     "expand": "Usage: .expand <short_url>\nResolve final redirected URL.",
-    "reactsave": "Usage: .reactsave on|off\nAlias of .autosave. Turn this ON, then react with ❤️ on any message and Cypherus auto-saves that liked message to Saved Messages.",
-    "storylike": "Usage: .storylike on|off\nFriendly alias for .autosave/.reactsave. It enables the same save-by-like workflow so you can quickly keep content by reacting with ❤️.",
+    "reactsave": "Usage: .reactsave on|off\nAlias of .autosave. Turn this ON, then react with ❤️ on any message or story and Cypherus auto-saves it to Saved Messages.",
+    "storylike": "Usage: .storylike on|off\nFriendly alias for .autosave/.reactsave. It enables the same save-by-like workflow for messages and stories so you can quickly keep content by reacting with ❤️.",
     "bookmark": "Usage: reply + .bookmark <tag>\nSave replied message under a tag.",
     "forwarddm": "Usage: .forwarddm on|off\nAuto-forward messages from this chat to Saved Messages.",
     "gitclone": "Usage: .gitclone <repo_url>\nClone Git repo into downloads folder.",
@@ -325,7 +325,9 @@ COMMAND_HELP = {
 def resolve_help(query: str) -> str:
     q = query.strip().lower().lstrip('.')
     if not q:
-        return HELP_TEXT + "\n\nTip: .help <command>  (example: .help vvwatch)"
+        return build_menu_text() + "\n\nTip: .help <command>  (example: .help vvwatch)"
+    if q in REMOVED_COMMANDS:
+        return "Command not found. Use .menu"
     if q in COMMAND_HELP:
         return (
             f"**.{q}**\n{COMMAND_HELP[q]}\n\n"
@@ -345,6 +347,86 @@ def parse_command(text: str) -> tuple[str, str]:
         return "", ""
     parts = raw.split(maxsplit=1)
     return parts[0].lower(), (parts[1] if len(parts) > 1 else "")
+
+
+REMOVED_COMMANDS = {
+    "ask",
+    "logo",
+    "story",
+    "meme",
+    "memetext",
+    "calc",
+    "iscypherus",
+    "setpin",
+    "changepin",
+    "hide",
+    "unhide",
+    "setaza",
+    "aza",
+    "getaza",
+    "resetaza",
+    "savestatus",
+    "tourl",
+    "setpp",
+    "delpp",
+    "setstatus",
+    "silentmsg",
+    "selfdestruct",
+    "draft",
+    "notes",
+    "todo",
+    "timer",
+    "remind",
+    "autosave",
+    "reactsave",
+    "like",
+    "bookmark",
+    "forwarddm",
+    "markread",
+    "markunread",
+    "pause",
+    "resume",
+    "cooldown",
+    "version",
+    "runtime",
+    "urlinfo",
+    "expand",
+    "image",
+    "gitclone",
+    "setbio",
+    "setprofilepic",
+    "chatbot",
+    "settimezone",
+    "antidelete",
+    "antiedit",
+    "readreceipts",
+    "save",
+    "get",
+    "list",
+    "daily",
+    "rank",
+    "backup",
+    "restore",
+    "setprefix",
+    "setbotname",
+    "setownername",
+    "autoread",
+    "autotype",
+    "setwelcome",
+    "setgoodbye",
+    "qrcode",
+    "tinyurl",
+    "sticker",
+    "toimage",
+    "toaudio",
+}
+
+
+def build_menu_text() -> str:
+    cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
+    return "**🚀 Cypherus Userbot Menu**\n\nAvailable commands:\n" + "\n".join(f"• .{c}" for c in cmds)
+
+
 async def command_arg_or_reply_text(event, arg: str) -> str:
     raw = (arg or "").strip()
     if raw:
@@ -355,6 +437,18 @@ async def command_arg_or_reply_text(event, arg: str) -> str:
         if txt:
             return txt
     return ""
+
+
+def format_download_error(exc: Exception) -> str:
+    text = str(exc).strip()
+    lower = text.lower()
+    if "tiktok" in lower:
+        return "Download failed for TikTok. The site likely changed or blocked the request. Try again later or use another source."
+    if "extractor" in lower or "webpage request" in lower:
+        return "Download failed. The extractor could not parse the page. Try a different link or update yt-dlp."
+    if not text:
+        return "Download failed."
+    return f"Download failed: {text[:800]}"
 
 
 def parse_duration(text: str) -> int:
@@ -450,6 +544,50 @@ async def save_media_if_needed(client: TelegramClient, message, label: str, forc
     except Exception as exc:
         logger.exception("[extract-error] %s :: %s", label, exc)
         return None
+
+
+def is_heart_reaction(reaction) -> bool:
+    emoticon = getattr(reaction, "emoticon", "") or ""
+    return emoticon in {"❤", "❤️"}
+
+
+async def describe_story_source(client: TelegramClient, peer, story) -> str:
+    lines = ["[story saved]"]
+    try:
+        entity = await client.get_entity(peer)
+        title = getattr(entity, "title", None) or getattr(entity, "first_name", None) or str(peer)
+        username = getattr(entity, "username", None)
+        lines.append(f"Peer: {title}" + (f" (@{username})" if username else ""))
+    except Exception:
+        lines.append(f"Peer: {peer}")
+    story_id = getattr(story, "id", None)
+    if story_id is not None:
+        lines.append(f"Story ID: {story_id}")
+    if getattr(story, "date", None):
+        lines.append(f"Date: {story.date}")
+    caption = (getattr(story, "caption", None) or "").strip()
+    if caption:
+        lines.append(f"Caption: {caption[:500]}")
+    return "\n".join(lines)
+
+
+async def save_story_if_needed(client: TelegramClient, peer, story, label: str) -> Path | None:
+    if not getattr(story, "media", None):
+        return None
+
+    user_media_dir = MEDIA_DIR / label / "stories"
+    user_media_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        local_path = await client.download_media(story, file=user_media_dir)
+        if local_path:
+            caption = await describe_story_source(client, peer, story)
+            if SAVE_EXTRACTED_TO_SAVED_MESSAGES:
+                await save_message_to_saved(client, caption, local_path)
+            logger.info("[story-save] %s %s", label, local_path)
+            return Path(local_path)
+    except Exception as exc:
+        logger.exception("[story-save-error] %s :: %s", label, exc)
+    return None
 
 
 async def update_user_settings(label: str, mutator):
@@ -620,7 +758,7 @@ async def register_handlers(client: TelegramClient, label: str):
         if cmd in {"help", "menu"}:
             await event.reply(resolve_help(arg if cmd == "help" else ""))
         elif cmd == "commands":
-            cmds = sorted(COMMAND_HELP.keys())
+            cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
             await event.reply("Available commands:\n" + "\n".join(f".{c}" for c in cmds[:180]))
         elif cmd == "ping":
             t0 = time.perf_counter()
@@ -650,9 +788,13 @@ async def register_handlers(client: TelegramClient, label: str):
                 await event.reply("Usage: .dl <url>")
             else:
                 status = await event.reply("Downloading...")
-                path = await asyncio.to_thread(download_media, target, MEDIA_DIR / label / "downloads")
-                await client.send_file(event.chat_id, path)
-                await status.delete()
+                try:
+                    path = await asyncio.to_thread(download_media, target, MEDIA_DIR / label / "downloads")
+                    await client.send_file(event.chat_id, path)
+                except Exception as exc:
+                    await event.reply(format_download_error(exc))
+                finally:
+                    await status.delete()
         elif cmd in {"gpt", "ask"}:
             prompt = await command_arg_or_reply_text(event, arg)
             if not prompt:
@@ -855,13 +997,53 @@ async def register_handlers(client: TelegramClient, label: str):
             reactions_text = str(update.reactions)
             if "👀" in reactions_text:
                 await save_media_if_needed(client, msg, label, force=True)
-            if data["settings"].get("autosave_like", False) and "❤️" in reactions_text:
-                try:
-                    await client.forward_messages("me", msg.id, from_peer=entity)
-                except Exception:
-                    pass
         except Exception:
             pass
+
+    async def save_story_reaction(update):
+        try:
+            data = store.load_user(label)
+            ensure_settings(data)
+            if not data["settings"].get("autosave_like", False):
+                return
+
+            update_name = type(update).__name__
+            peer = getattr(update, "peer", None)
+            story_id = getattr(update, "story_id", None)
+            reaction = getattr(update, "reaction", None)
+            logger.info(
+                "[story-update] %s label=%s peer=%s story_id=%s reaction=%r",
+                update_name,
+                label,
+                peer,
+                story_id,
+                reaction,
+            )
+
+            if peer is None or story_id is None:
+                logger.info("[story-update] missing peer/story_id label=%s update=%s", label, update_name)
+                return
+
+            input_peer = await client.get_input_entity(peer)
+            res = await client(functions.stories.GetStoriesByIDRequest(peer=input_peer, id=[story_id]))
+            stories = getattr(res, "stories", None) or []
+            story = stories[0] if stories else getattr(update, "story", None)
+            if not story:
+                logger.info("[story-update] no story payload label=%s story_id=%s", label, story_id)
+                return
+
+            saved = await save_story_if_needed(client, peer, story, label)
+            logger.info("[story-update] save result label=%s story_id=%s saved=%s", label, story_id, saved)
+        except Exception as exc:
+            logger.exception("[story-update-error] %s :: %s", label, exc)
+
+    @client.on(events.Raw(types.UpdateSentStoryReaction))
+    async def sent_story_reaction_handler(update):
+        await save_story_reaction(update)
+
+    @client.on(events.Raw(types.UpdateNewStoryReaction))
+    async def new_story_reaction_handler(update):
+        await save_story_reaction(update)
 
     @client.on(events.NewMessage(outgoing=True))
     async def command_handler(event):
@@ -870,6 +1052,9 @@ async def register_handlers(client: TelegramClient, label: str):
             return
         cmd, arg = parse_command((event.raw_text or "").replace(prefix, ".", 1))
         if not cmd:
+            return
+        if cmd in REMOVED_COMMANDS:
+            await event.edit("Command not found. Use .menu")
             return
         try:
             data = store.load_user(label)
@@ -893,7 +1078,7 @@ async def register_handlers(client: TelegramClient, label: str):
             if cmd in {"help", "menu"}:
                 await event.edit(resolve_help(arg if cmd == "help" else ""))
             elif cmd == "commands":
-                cmds = sorted(COMMAND_HELP.keys())
+                cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
                 await event.edit("Available commands:\n" + "\n".join(f".{c}" for c in cmds[:180]))
             elif cmd == "profile":
                 d = store.load_user(label); ensure_settings(d)
@@ -1588,24 +1773,27 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit("Usage: .playlist <url>")
                     return
                 await event.edit("Downloading playlist audio/video...")
-                import yt_dlp
-                outdir = MEDIA_DIR / label / "playlist"
-                outdir.mkdir(parents=True, exist_ok=True)
-                def _dl():
-                    with yt_dlp.YoutubeDL({"outtmpl": str(outdir / "%(playlist_index)s_%(title).70s.%(ext)s")}) as y:
-                        y.download([target])
-                await asyncio.to_thread(_dl)
-                files = sorted(outdir.glob("*"), key=lambda p: p.stat().st_mtime)
-                if not files:
-                    await event.edit("Playlist download completed but no files found.")
-                else:
-                    await event.edit(f"Playlist download completed. Sending {len(files)} file(s)...")
-                    for f in files[:20]:
-                        try:
-                            await client.send_file(event.chat_id, f)
-                        except Exception:
-                            pass
-                    await event.delete()
+                try:
+                    import yt_dlp
+                    outdir = MEDIA_DIR / label / "playlist"
+                    outdir.mkdir(parents=True, exist_ok=True)
+                    def _dl():
+                        with yt_dlp.YoutubeDL({"outtmpl": str(outdir / "%(playlist_index)s_%(title).70s.%(ext)s")}) as y:
+                            y.download([target])
+                    await asyncio.to_thread(_dl)
+                    files = sorted(outdir.glob("*"), key=lambda p: p.stat().st_mtime)
+                    if not files:
+                        await event.edit("Playlist download completed but no files found.")
+                    else:
+                        await event.edit(f"Playlist download completed. Sending {len(files)} file(s)...")
+                        for f in files[:20]:
+                            try:
+                                await client.send_file(event.chat_id, f)
+                            except Exception:
+                                pass
+                        await event.delete()
+                except Exception as exc:
+                    await event.edit(format_download_error(exc))
 
             elif cmd == "storydl":
                 await event.edit("Use .dl with direct story URL (Telegram/Instagram). @username story scraping is not reliable without platform auth.")
@@ -1615,68 +1803,68 @@ async def register_handlers(client: TelegramClient, label: str):
                 if not query:
                     await event.edit("Usage: .song <name>")
                     return
-                import yt_dlp
-                outdir = MEDIA_DIR / label / "songs"
-                outdir.mkdir(parents=True, exist_ok=True)
-                await event.edit("Searching and downloading song...")
-                def _song():
-                    opts = {
-                        "format": "bestaudio/best",
-                        "outtmpl": str(outdir / "%(title).70s.%(ext)s"),
-                        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
-                        "noplaylist": True,
-                        "quiet": True,
-                        "ignoreerrors": True,
-                        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
-                    }
-                    with yt_dlp.YoutubeDL(opts) as y:
-                        info = y.extract_info(f"ytsearch10:{query}", download=False) or {}
-                        entries = [e for e in (info.get("entries") or []) if e and e.get("webpage_url")]
-                        if not entries:
-                            raise RuntimeError("No downloadable results found.")
-                        last_exc = None
-                        for e in entries[:5]:
-                            try:
-                                y.download([e["webpage_url"]])
-                                return
-                            except Exception as exc:
-                                last_exc = exc
-                        raise RuntimeError(f"All candidate results failed: {last_exc}")
                 try:
+                    import yt_dlp
+                    outdir = MEDIA_DIR / label / "songs"
+                    outdir.mkdir(parents=True, exist_ok=True)
+                    await event.edit("Searching and downloading song...")
+                    def _song():
+                        opts = {
+                            "format": "bestaudio/best",
+                            "outtmpl": str(outdir / "%(title).70s.%(ext)s"),
+                            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+                            "noplaylist": True,
+                            "quiet": True,
+                            "ignoreerrors": True,
+                            "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+                        }
+                        with yt_dlp.YoutubeDL(opts) as y:
+                            info = y.extract_info(f"ytsearch10:{query}", download=False) or {}
+                            entries = [e for e in (info.get("entries") or []) if e and e.get("webpage_url")]
+                            if not entries:
+                                raise RuntimeError("No downloadable results found.")
+                            last_exc = None
+                            for e in entries[:5]:
+                                try:
+                                    y.download([e["webpage_url"]])
+                                    return
+                                except Exception as exc:
+                                    last_exc = exc
+                            raise RuntimeError(f"All candidate results failed: {last_exc}")
                     await asyncio.to_thread(_song)
                     latest = max(outdir.glob("*"), key=lambda p: p.stat().st_mtime)
                     await client.send_file(event.chat_id, latest)
                     await event.delete()
                 except Exception as exc:
-                    await event.edit(f"Song download failed: {exc}\nTry another query or use cookies for age-restricted videos.")
+                    await event.edit(f"Song download failed: {format_download_error(exc)}")
 
             elif cmd == "spotify":
                 target = await command_arg_or_reply_text(event, arg)
                 if not target or "spotify.com/track/" not in target:
                     await event.edit("Usage: .spotify <spotify_track_url>")
                     return
-                import yt_dlp
-                outdir = MEDIA_DIR / label / "spotify"
-                outdir.mkdir(parents=True, exist_ok=True)
-                await event.edit("Getting song details from Spotify...")
-                def _spotify_prepare_and_download():
-                    base_opts = {"quiet": True, "noplaylist": True, "ignoreerrors": True}
-                    with yt_dlp.YoutubeDL(base_opts) as y:
-                        info = y.extract_info(target.strip(), download=False) or {}
-                    title = info.get("title") or "Unknown title"
-                    source_url = info.get("webpage_url") or target.strip()
-                    dl_opts = {
-                        "format": "bestaudio/best",
-                        "outtmpl": str(outdir / "%(title).70s.%(ext)s"),
-                        "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
-                        "noplaylist": True,
-                        "quiet": True,
-                        "ignoreerrors": True,
-                    }
-                    with yt_dlp.YoutubeDL(dl_opts) as y:
-                        y.download([source_url])
-                    return title
                 try:
+                    import yt_dlp
+                    outdir = MEDIA_DIR / label / "spotify"
+                    outdir.mkdir(parents=True, exist_ok=True)
+                    await event.edit("Getting song details from Spotify...")
+                    def _spotify_prepare_and_download():
+                        base_opts = {"quiet": True, "noplaylist": True, "ignoreerrors": True}
+                        with yt_dlp.YoutubeDL(base_opts) as y:
+                            info = y.extract_info(target.strip(), download=False) or {}
+                        title = info.get("title") or "Unknown title"
+                        source_url = info.get("webpage_url") or target.strip()
+                        dl_opts = {
+                            "format": "bestaudio/best",
+                            "outtmpl": str(outdir / "%(title).70s.%(ext)s"),
+                            "postprocessors": [{"key": "FFmpegExtractAudio", "preferredcodec": "mp3", "preferredquality": "192"}],
+                            "noplaylist": True,
+                            "quiet": True,
+                            "ignoreerrors": True,
+                        }
+                        with yt_dlp.YoutubeDL(dl_opts) as y:
+                            y.download([source_url])
+                        return title
                     song_title = await asyncio.to_thread(_spotify_prepare_and_download)
                     await event.edit(f"Downloading '{song_title}'...")
                     files = sorted(outdir.glob("*"), key=lambda p: p.stat().st_mtime)
@@ -1687,7 +1875,7 @@ async def register_handlers(client: TelegramClient, label: str):
                     await client.send_file(event.chat_id, latest)
                     await event.delete()
                 except Exception as exc:
-                    await event.edit(f"Spotify download failed: {exc}")
+                    await event.edit(f"Spotify download failed: {format_download_error(exc)}")
 
             elif cmd == "warn":
                 if not event.is_group:
@@ -2529,9 +2717,12 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit("Usage: .dl <url>")
                 else:
                     await event.edit("Downloading...")
-                    path = await asyncio.to_thread(download_media, target, MEDIA_DIR / label / "downloads")
-                    await client.send_file(event.chat_id, path)
-                    await event.delete()
+                    try:
+                        path = await asyncio.to_thread(download_media, target, MEDIA_DIR / label / "downloads")
+                        await client.send_file(event.chat_id, path)
+                        await event.delete()
+                    except Exception as exc:
+                        await event.edit(format_download_error(exc))
             elif cmd == "meta":
                 target = await command_arg_or_reply_text(event, arg)
                 await event.edit("\n".join(f"{k}: {v}" for k, v in (await asyncio.to_thread(extract_metadata, target)).items()) if target else "Usage: .meta <url>")
@@ -2964,7 +3155,6 @@ async def start_client(label: str, profile: dict):
     except Exception:
         pass
     await register_handlers(client, label)
-    asyncio.create_task(story_auto_worker(client, label))
     return client
 
 

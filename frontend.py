@@ -3,12 +3,62 @@ from __future__ import annotations
 import asyncio
 import json
 from getpass import getpass
+from pathlib import Path
 
 from telethon import TelegramClient
 from telethon.sessions import StringSession
 
 from config import USERS_DIR
 from utils.session_store import SessionStore
+
+ENV_PATH = Path(".env")
+
+
+def load_local_env_file(path: Path = ENV_PATH) -> dict[str, str]:
+    data: dict[str, str] = {}
+    if not path.exists():
+        return data
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        if key:
+            data[key] = value
+    return data
+
+
+def save_env_value(key: str, value: str | None, path: Path = ENV_PATH) -> None:
+    lines: list[str] = []
+    if path.exists():
+        for line in path.read_text(encoding="utf-8").splitlines():
+            stripped = line.strip()
+            if not stripped or stripped.startswith("#") or "=" not in stripped:
+                lines.append(line)
+                continue
+            existing_key = stripped.split("=", 1)[0].strip()
+            if existing_key != key:
+                lines.append(line)
+    elif value is not None and Path(".env.example").exists():
+        lines = Path(".env.example").read_text(encoding="utf-8").splitlines()
+    if value is not None:
+        rendered = value.replace("\\", "\\\\").replace('"', '\\"')
+        lines.append(f'{key}="{rendered}"')
+    path.write_text(("\n".join(lines).rstrip() + "\n") if lines else "", encoding="utf-8")
+
+
+def configure_control_bot() -> None:
+    current = load_local_env_file().get("CONTROL_BOT_TOKEN", "")
+    print(f"Current CONTROL_BOT_TOKEN: {'set' if current else 'not set'}")
+    token = input("Enter control bot token (leave blank to clear): ").strip()
+    if token:
+        save_env_value("CONTROL_BOT_TOKEN", token)
+        print("Control bot token saved to .env")
+    else:
+        save_env_value("CONTROL_BOT_TOKEN", None)
+        print("Control bot token removed from .env")
 
 
 async def create_account(store: SessionStore) -> None:
@@ -112,6 +162,7 @@ def main() -> None:
         "3) Enable/Disable account\n"
         "4) Remove account\n"
         "5) Export account metadata\n"
+        "6) Configure control bot token\n"
         "0) Exit\n"
     )
 
@@ -128,6 +179,8 @@ def main() -> None:
             remove_account(store)
         elif choice == "5":
             export_accounts_json(store)
+        elif choice == "6":
+            configure_control_bot()
         elif choice == "0":
             break
         else:

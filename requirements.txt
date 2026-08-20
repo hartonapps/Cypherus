@@ -1,10 +1,12 @@
-telethon==1.40.0
+telethon==1.44.0
 httpx==0.28.1
-yt-dlp
-SpeechRecognition==3.14.3
-edge-tts
-ffmpeg-python
-Pillow
-reportlab
-markdown2
-pyzbar
+yt-dlp==2026.7.4
+SpeechRecognition==3.17.0
+edge-tts==7.2.8
+Pillow==12.3.0
+reportlab==5.0.0
+markdown2==2.5.5
+pyzbar==0.1.9
+
+# System dependency, not a pip package:
+# ffmpeg binary must be installed separately for media conversion features.
