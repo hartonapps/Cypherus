@@ -326,8 +326,6 @@ def resolve_help(query: str) -> str:
     q = query.strip().lower().lstrip('.')
     if not q:
         return HELP_TEXT + "\n\nTip: .help <command>  (example: .help vvwatch)"
-    if q in REMOVED_COMMANDS:
-        return "Command not found. Use .menu"
     if q in COMMAND_HELP:
         return (
             f"**.{q}**\n{COMMAND_HELP[q]}\n\n"
@@ -347,18 +345,6 @@ def parse_command(text: str) -> tuple[str, str]:
         return "", ""
     parts = raw.split(maxsplit=1)
     return parts[0].lower(), (parts[1] if len(parts) > 1 else "")
-
-
-REMOVED_COMMANDS = {
-    "iscypherus","search","ytsearch","setpin","changepin","hide","unhide","setaza","aza","getaza","resetaza",
-    "logo","story","analyze","transcribe","summarize","translate","savestatus","compress","rename","tomp4","tomp3","toaudio",
-    "away","schedule","filter","generateimg","tiktok","instagram","twitter","video","song","qrcode","tinyurl","sticker","toimage","tourl",
-    "lyrics","define","weather","jokes","memes","quotes","setprefix","setbotname","setownername","autoread","autotype","setwelcome","setgoodbye","link",
-    "silentmsg","selfdestruct","draft","notes","todo","timer","remind","autosave","reactsave","storylike","like","bookmark","forwarddm",
-    "markread","markunread","clearchat","pause","resume","cooldown","version","urlinfo","expand","image","gitclone"
-}
-
-
 async def command_arg_or_reply_text(event, arg: str) -> str:
     raw = (arg or "").strip()
     if raw:
@@ -631,13 +617,10 @@ async def register_handlers(client: TelegramClient, label: str):
 
     async def run_public_command(event, cmd: str, arg: str):
         """Run commands sent by allow-listed public users without echoing their text."""
-        if cmd in REMOVED_COMMANDS:
-            await event.reply("Command not found. Use .menu")
-            return
         if cmd in {"help", "menu"}:
             await event.reply(resolve_help(arg if cmd == "help" else ""))
         elif cmd == "commands":
-            cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
+            cmds = sorted(COMMAND_HELP.keys())
             await event.reply("Available commands:\n" + "\n".join(f".{c}" for c in cmds[:180]))
         elif cmd == "ping":
             t0 = time.perf_counter()
@@ -888,9 +871,6 @@ async def register_handlers(client: TelegramClient, label: str):
         cmd, arg = parse_command((event.raw_text or "").replace(prefix, ".", 1))
         if not cmd:
             return
-        if cmd in REMOVED_COMMANDS:
-            await event.edit("Command not found. Use .menu")
-            return
         try:
             data = store.load_user(label)
             ensure_settings(data)
@@ -910,15 +890,10 @@ async def register_handlers(client: TelegramClient, label: str):
             st_settings["last_command_ts"] = now_ts
             store.save_user(label, data)
 
-            removed_cmds = {"persona","generate","code","teach","roast","ship","rate","vibecheck","truth","dare","lockchat","blockword","stats","activity","usage","daily","rank","genpass","video","jokes","memes","weather","define","tourl","ghostmode","hideonline","autostoryview","autostoryreact"}
-            if cmd in removed_cmds:
-                await event.edit("This feature was removed in current build.")
-                return
-
             if cmd in {"help", "menu"}:
                 await event.edit(resolve_help(arg if cmd == "help" else ""))
             elif cmd == "commands":
-                cmds = sorted(k for k in COMMAND_HELP.keys() if k not in REMOVED_COMMANDS)
+                cmds = sorted(COMMAND_HELP.keys())
                 await event.edit("Available commands:\n" + "\n".join(f".{c}" for c in cmds[:180]))
             elif cmd == "profile":
                 d = store.load_user(label); ensure_settings(d)
@@ -1113,9 +1088,6 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit("AFK enabled.")
                 else:
                     await event.edit("Usage: .away <text> OR .away off")
-
-            elif cmd in {"persona","generate","code","teach","roast","ship","rate","vibecheck","truth","dare","lockchat","blockword","stats","activity","usage","daily","rank","genpass","video","jokes","memes","weather","define","tourl"}:
-                await event.edit("This feature was removed in current build.")
 
             elif cmd == "persona":
                 mode = arg.strip().lower()
