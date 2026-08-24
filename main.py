@@ -102,7 +102,8 @@ HELP_TEXT = """**🚀 Cypherus Userbot Menu**
 **Automation**
 • `.away <text>` / `.away off` → AFK auto-reply
 • `.schedule <10m|HH:MM> <message>` → send later
-• `.filter <word> <response>` / `.keyword add <word> <response>` → keyword auto-reply
+• `.filter add "word"` / `.filter delete "word"` / `.filter off|on <@user/id|thischat>` → keyword auto-reply
+• `.keyword add "this word" <response>` → keyword auto-reply with quoted multi-word keys
 • `.blockword add "word"` / `.blockword delete "word"` / `.blockword off|on <@user/id|thischat>` → block words per chat
 
 **Privacy / Logs**
@@ -200,7 +201,7 @@ COMMAND_HELP = {
     "away": "Usage: .away <text> | .away off\nEnable/disable AFK auto-reply.",
     "schedule": "Usage: .schedule <10m|HH:MM> <message>\nSend a message later.",
     "filter": "Usage: .filter <word> <response>\nAuto-reply when keyword is detected.",
-    "keyword": "Usage: .keyword add|list|remove <word> [response]\nManage keyword auto-replies. This uses the same filter storage as .filter.",
+    "keyword": "Usage: .keyword add|list|remove <word> [response]\nManage keyword auto-replies. Use quotes for multi-word keywords, for example: .keyword \"this word\" response.",
     "blockword": "Usage: .blockword add|delete|list <\"word\"> | .blockword off|on <@user/id|thischat>\nManage message-blocking words and disable/enable them per chat. By default blockwords are enabled everywhere.",
     "vvwatch": "Usage: .vvwatch on|off\nAuto-monitor expiring/view-once media.",
     "vvsave": "Usage: reply media + .vvsave\nForce save replied media to Saved Messages.",
@@ -363,6 +364,11 @@ def is_anti_delete_enabled_for_chat(settings: dict, chat_id: int | str) -> bool:
 
 def is_blockword_enabled_for_chat(settings: dict, chat_id: int | str) -> bool:
     disabled = settings.get("blockword_disabled_chats", {}) or {}
+    return str(chat_id) not in {str(x) for x in disabled.keys()}
+
+
+def is_filter_enabled_for_chat(settings: dict, chat_id: int | str) -> bool:
+    disabled = settings.get("filter_disabled_chats", {}) or {}
     return str(chat_id) not in {str(x) for x in disabled.keys()}
 
 
@@ -798,6 +804,7 @@ def ensure_settings(data: dict):
     s.setdefault("lockchat", False)
     s.setdefault("blockwords", [])
     s.setdefault("blockword_disabled_chats", {})
+    s.setdefault("filter_disabled_chats", {})
     s.setdefault("stats", {"messages_seen": 0, "messages_sent": 0, "commands": 0, "chat_hits": {}})
     s.setdefault("saved_items", {})
     s.setdefault("xp", {"points": 0, "daily_last": ""})
@@ -1097,7 +1104,7 @@ async def register_handlers(client: TelegramClient, label: str):
                         pass
 
         for k, v in settings.get("filters", {}).items():
-            if k.lower() in (msg.raw_text or "").lower() and not event.out:
+            if is_filter_enabled_for_chat(settings, event.chat_id) and k.lower() in (msg.raw_text or "").lower() and not event.out:
                 await event.reply(v)
                 break
 
@@ -1479,15 +1486,16 @@ async def register_handlers(client: TelegramClient, label: str):
                     f"antispam: {'ON' if st.get('antispam', {}).get('enabled') else 'OFF'}",
                     f"anti-delete: {'ON' if st.get('anti_delete') else 'OFF'}",
                     f"anti-edit: {'ON' if st.get('anti_edit') else 'OFF'}",
-                f"vvwatch: {'ON' if st.get('vvwatch') else 'OFF'}",
-                f"autostoryview: {'ON' if st.get('autostory_view') else 'OFF'}",
-                f"autostoryreact: {'ON' if st.get('autostory_react') else 'OFF'}",
-                f"lockchat: {'ON' if st.get('lockchat') else 'OFF'}",
-                f"filters: {len(st.get('filters', {}))}",
-                f"blocked words: {len(st.get('blockwords', []))}",
-                f"blockword exceptions: {len(st.get('blockword_disabled_chats', {}))}",
-                f"hidden chats: {len(st.get('hidden_chats', {}))}",
-            ]
+                    f"vvwatch: {'ON' if st.get('vvwatch') else 'OFF'}",
+                    f"autostoryview: {'ON' if st.get('autostory_view') else 'OFF'}",
+                    f"autostoryreact: {'ON' if st.get('autostory_react') else 'OFF'}",
+                    f"lockchat: {'ON' if st.get('lockchat') else 'OFF'}",
+                    f"filters: {len(st.get('filters', {}))}",
+                    f"filter exceptions: {len(st.get('filter_disabled_chats', {}))}",
+                    f"blocked words: {len(st.get('blockwords', []))}",
+                    f"blockword exceptions: {len(st.get('blockword_disabled_chats', {}))}",
+                    f"hidden chats: {len(st.get('hidden_chats', {}))}",
+                ]
                 await event.edit("\n".join(lines)[:3900])
 
             elif cmd == "away":
@@ -1893,21 +1901,115 @@ async def register_handlers(client: TelegramClient, label: str):
                     await event.edit(f"Scheduled in {delay}s")
 
             elif cmd == "filter":
-                p = arg.split(maxsplit=1)
-                if len(p) < 2:
-                    await event.edit("Usage: .filter <word> <response>")
-                else:
-                    word, response = p[0].lower(), p[1]
+                try:
+                    parts = shlex.split(arg)
+                except ValueError:
+                    await event.edit("Usage: .filter add|delete|list <\"word\"> | .filter off|on <@user/id|thischat>")
+                    return
+                action = (parts[0].lower() if parts else "list")
+                rest = parts[1:]
+                if action not in {"add", "delete", "remove", "del", "list", "on", "off"} and parts:
+                    rest = parts
+                    action = "add"
+
+                if action == "list":
+                    d = store.load_user(label)
+                    ensure_settings(d)
+                    st = d["settings"]
+                    filters = st.get("filters", {})
+                    disabled = st.get("filter_disabled_chats", {}) or {}
+                    lines = ["Filters:"]
+                    if filters:
+                        lines.extend([f"• {k} -> {v}" for k, v in sorted(filters.items())])
+                    else:
+                        lines.append("none")
+                    lines += ["", "Disabled chats:"]
+                    if disabled:
+                        for cid, meta in disabled.items():
+                            name = meta.get("name") if isinstance(meta, dict) else None
+                            lines.append(f"• {name or cid} ({cid})")
+                    else:
+                        lines.append("none")
+                    await event.edit("\n".join(lines)[:3900])
+                    return
+
+                if action in {"add", "set"}:
+                    if len(parts) < 2:
+                        await event.edit("Usage: .filter add|delete|list <\"word\"> | .filter off|on <@user/id|thischat>")
+                        return
+                    if len(parts) < 3 and action == "add" and parts and len(parts) >= 2:
+                        # Legacy form: .filter word response
+                        key = parts[0].lower()
+                        response = " ".join(parts[1:]).strip()
+                    elif len(rest) >= 2:
+                        key = rest[0].strip().lower()
+                        response = " ".join(rest[1:]).strip()
+                    else:
+                        await event.edit("Usage: .filter add|delete|list <\"word\"> | .filter off|on <@user/id|thischat>")
+                        return
+                    if not key or not response:
+                        await event.edit("Usage: .filter add|delete|list <\"word\"> | .filter off|on <@user/id|thischat>")
+                        return
                     def m(d):
                         ensure_settings(d)
-                        d["settings"].setdefault("filters", {})[word] = response
+                        d["settings"].setdefault("filters", {})[key] = response
                     await update_user_settings(label, m)
-                    await event.edit(f"Filter set for: {word}")
+                    await event.edit(f"Filter set for: {key}")
+                    return
+
+                if action in {"delete", "remove", "del"}:
+                    key = " ".join(rest).strip().lower()
+                    if not key:
+                        await event.edit("Usage: .filter delete <\"word\">")
+                        return
+                    d = store.load_user(label)
+                    ensure_settings(d)
+                    filters = d["settings"].setdefault("filters", {})
+                    if key not in filters:
+                        await event.edit(f"Filter not found: {key}")
+                        return
+                    def m(data):
+                        ensure_settings(data)
+                        data["settings"].setdefault("filters", {}).pop(key, None)
+                    await update_user_settings(label, m)
+                    await event.edit(f"Filter removed: {key}")
+                    return
+
+                if action in {"on", "off"}:
+                    target = " ".join(rest).strip()
+                    chat_id = await resolve_chat_target_id(client, event, target)
+                    if chat_id is None:
+                        await event.edit("Usage: .filter off|on <@user/id|thischat>")
+                        return
+                    chat_name = None
+                    if action == "off":
+                        try:
+                            ent = await client.get_entity(chat_id)
+                            chat_name = getattr(ent, "title", None) or getattr(ent, "first_name", None) or getattr(ent, "username", None) or str(chat_id)
+                        except Exception:
+                            chat_name = str(chat_id)
+                    def m(d):
+                        ensure_settings(d)
+                        disabled = d["settings"].setdefault("filter_disabled_chats", {})
+                        key = str(chat_id)
+                        if action == "off":
+                            disabled[key] = {"name": chat_name or str(chat_id)}
+                        else:
+                            disabled.pop(key, None)
+                    await update_user_settings(label, m)
+                    await event.edit(f"Filter {action} for {target or 'thischat'}.")
+                    return
+
+                await event.edit("Usage: .filter add|delete|list <\"word\"> | .filter off|on <@user/id|thischat>")
 
             elif cmd == "keyword":
-                parts = arg.split(maxsplit=2)
+                try:
+                    parts = shlex.split(arg)
+                except ValueError:
+                    await event.edit("Usage: .keyword add|list|remove <\"word\"> [response]")
+                    return
                 if not parts:
-                    await event.edit("Usage: .keyword add|list|remove <word> [response]")
+                    await event.edit("Usage: .keyword add|list|remove <\"word\"> [response]")
                 else:
                     sub = parts[0].lower()
                     d = store.load_user(label)
@@ -1921,12 +2023,12 @@ async def register_handlers(client: TelegramClient, label: str):
                             await event.edit("No keyword replies saved yet.")
                     elif sub in {"add", "set"}:
                         if len(parts) < 3:
-                            await event.edit("Usage: .keyword add <word> <response>")
+                            await event.edit("Usage: .keyword add <\"word\"> <response>")
                         else:
                             word = parts[1].lower()
-                            response = parts[2].strip()
-                            if not response:
-                                await event.edit("Usage: .keyword add <word> <response>")
+                            response = " ".join(parts[2:]).strip()
+                            if not word or not response:
+                                await event.edit("Usage: .keyword add <\"word\"> <response>")
                             elif word in filters:
                                 await event.edit(f"Keyword already exists: {word}\nCurrent reply: {filters[word]}")
                             else:
@@ -1937,9 +2039,9 @@ async def register_handlers(client: TelegramClient, label: str):
                                 await event.edit(f"Keyword added: {word}")
                     elif sub in {"remove", "del", "delete"}:
                         if len(parts) < 2:
-                            await event.edit("Usage: .keyword remove <word>")
+                            await event.edit("Usage: .keyword remove <\"word\">")
                         else:
-                            word = parts[1].lower()
+                            word = " ".join(parts[1:]).strip().lower()
                             if word not in filters:
                                 await event.edit(f"Keyword not found: {word}")
                             else:
@@ -1949,7 +2051,7 @@ async def register_handlers(client: TelegramClient, label: str):
                                 await update_user_settings(label, m)
                                 await event.edit(f"Keyword removed: {word}")
                     else:
-                        await event.edit("Usage: .keyword add|list|remove <word> [response]")
+                        await event.edit("Usage: .keyword add|list|remove <\"word\"> [response]")
 
             elif cmd == "anti-delete":
                 raw = arg.strip()
