@@ -27,10 +27,10 @@ from config import (
     SAVE_EXTRACTED_TO_SAVED_MESSAGES,
     USERS_DIR,
 )
-from utils.ai_tools import ask_free_ai, summarize_text, translate_text, generate_horde_image, transcribe_audio_free, generate_horde_logo_set
+from utils.ai_tools import ask_free_ai, transcribe_audio_free, generate_horde_logo_set
 from utils.downloaders import download_media, extract_metadata
 from utils.helpers import build_qr_png_bytes, safe_calc, shorten_url
-from utils.creator_tools import make_meme_image, make_text_meme, fetch_web_screenshot, text_to_pdf
+from utils.creator_tools import make_text_meme, fetch_web_screenshot, text_to_pdf
 from utils.logger import setup_logger
 from utils.media_tools import image_to_sticker, sticker_to_image
 from utils.session_store import SessionStore
@@ -422,7 +422,6 @@ REMOVED_COMMANDS = {
     "resume",
     "cooldown",
     "version",
-    "runtime",
     "urlinfo",
     "expand",
     "image",
@@ -434,6 +433,12 @@ REMOVED_COMMANDS = {
     "antidelete",
     "antiedit",
     "readreceipts",
+    "generateimg",
+    "analyze",
+    "summarize",
+    "translate",
+    "unlinktoken",
+    "lockchat",
     "save",
     "get",
     "list",
@@ -453,6 +458,12 @@ REMOVED_COMMANDS = {
     "sticker",
     "toimage",
     "toaudio",
+    "define",
+    "weather",
+    "meme",
+    "quotes",
+    "autostoryview",
+    "autostoryreact",
 }
 
 
