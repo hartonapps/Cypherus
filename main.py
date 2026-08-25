@@ -616,16 +616,35 @@ def format_menu_command(name: str) -> str:
     return f"`.{name}`"
 
 
+def category_icon(title: str) -> str:
+    icons = {
+        "Core": "◈",
+        "Automation": "◉",
+        "Privacy / Safety": "✦",
+        "Workspace / Notes": "▣",
+        "Media / Downloads": "◎",
+        "AI / Text": "◆",
+        "Accounts / Group": "◍",
+    }
+    return icons.get(title, "◌")
+
+
 def build_menu_text() -> str:
-    lines = ["**🚀 Cypherus Userbot Menu**", "", "Available commands by category:"]
+    lines = [
+        "**◈ Cypherus Command Matrix**",
+        "",
+        "**▣ Professional command index**",
+        "",
+    ]
     for title, commands in MENU_CATEGORIES:
         visible = [cmd for cmd in commands if cmd not in REMOVED_COMMANDS]
         if not visible:
             continue
+        lines.append(f"{category_icon(title)} **{title}**")
+        lines.append("   " + " ".join(format_menu_command(cmd) for cmd in visible))
         lines.append("")
-        lines.append(f"**{title}**")
-        lines.append(" • " + " ".join(format_menu_command(cmd) for cmd in visible))
-    return "\n".join(lines)
+    lines.append("~ by happiness")
+    return "\n".join(lines).rstrip() + "\n"
 
 
 async def command_arg_or_reply_text(event, arg: str) -> str:
